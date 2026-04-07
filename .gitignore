@@ -1,0 +1,43 @@
+# Node modules
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# C++
+*.o
+*.exe
+*.out
+*.a
+build/
+cmake-build-*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archives
+*.zip
+*.tar.gz
+*.tgz
+
+# SSH keys
+ssh_key
+ssh_key.pub
+*.pem
+
+# Credentials
+*.xpr
