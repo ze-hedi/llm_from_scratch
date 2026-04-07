@@ -32,6 +32,11 @@ func NewModel() Model {
 	ta.ShowLineNumbers = false
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
+	// Apply uniform grey background to entire textarea
+	ta.FocusedStyle.Base = lipgloss.NewStyle().Background(lipgloss.Color("235"))
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(lipgloss.Color("235"))
+	ta.BlurredStyle.Base = lipgloss.NewStyle().Background(lipgloss.Color("235"))
+
 	vp := viewport.New(80, 20)
 	vp.SetContent("")
 
