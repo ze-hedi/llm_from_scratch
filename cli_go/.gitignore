@@ -25,3 +25,6 @@ go.work
 # OS
 .DS_Store
 Thumbs.db
+
+# Config files (user-specific)
+cli_model_set.json

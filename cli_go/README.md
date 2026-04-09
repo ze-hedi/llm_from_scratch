@@ -9,6 +9,7 @@ A beautiful terminal-based chatbot interface built with Go, Bubble Tea, and Cobr
 - **Keyboard Controls**: Fully keyboard-driven interface
 - **Responsive Design**: Adapts to terminal window size
 - **Clean Architecture**: Well-organized Go project structure
+- **Extensions**: Modular extension system with built-in Tamagotchi game
 
 ## Prerequisites
 
@@ -37,11 +38,32 @@ go build -o chatbot-tui .
 ./chatbot-tui chat
 ```
 
+### Play Tamagotchi
+
+```bash
+# Start the game (choose a pet if first time)
+./chatbot-tui tamagotchi
+
+# Choose a new pet
+./chatbot-tui tamagotchi choose
+
+# Reset your pet
+./chatbot-tui tamagotchi reset
+```
+
 ### Keyboard Controls
 
+**Chat Mode:**
 - **Enter**: Send message
+- **Alt+Enter**: New line
+- **Ctrl+N**: Toggle sidebar
 - **Ctrl+C** or **Esc**: Quit the application
 - **Arrow Keys**: Navigate through chat history
+
+**Tamagotchi Mode:**
+- Type commands: `feed`, `play`, `heal`, `status`, `quit`
+- **Enter**: Send command
+- **Ctrl+C** or **Esc**: Quit the game
 
 ## Project Structure
 
@@ -49,11 +71,26 @@ go build -o chatbot-tui .
 .
 ├── cmd/                    # CLI commands
 │   ├── root.go            # Root command
-│   └── chat.go            # Chat command
+│   ├── chat.go            # Chat command
+│   ├── settings.go        # Settings command
+│   └── tamagotchi.go      # Tamagotchi command
 ├── internal/
-│   └── tui/               # TUI implementation
-│       ├── model.go       # Bubble Tea model
-│       └── styles.go      # UI styling
+│   ├── tui/               # Chat TUI implementation
+│   │   ├── model.go       # Bubble Tea model
+│   │   └── styles.go      # UI styling
+│   └── settings/          # Settings management
+│       ├── config.go      # Configuration
+│       ├── model.go       # Settings model
+│       └── styles.go      # Settings styles
+├── extensions/            # Modular extensions
+│   └── tamagotchi/        # Tamagotchi game extension
+│       ├── pet/           # Pet logic
+│       │   └── pet.go     # Pet implementation
+│       ├── tui/           # Tamagotchi TUI
+│       │   ├── model.go   # Game model
+│       │   └── styles.go  # Game styles
+│       ├── choose.go      # Pet selection
+│       └── README.md      # Extension docs
 ├── pkg/
 │   └── chatbot/           # Chatbot logic
 │       └── bot.go         # Bot implementation

@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/yourusername/chatbot-tui/internal/settings"
 	"github.com/yourusername/chatbot-tui/pkg/chatbot"
 )
 
@@ -23,6 +24,8 @@ type Model struct {
 	inputTokens    int
 	outputTokens   int
 	sidebarVisible bool
+	currentModel   *settings.Model
+	maxTokens      int
 }
 
 func NewModel() Model {
@@ -30,11 +33,13 @@ func NewModel() Model {
 	ta.Placeholder = "Type your message..."
 	ta.Focus()
 	ta.Prompt = "┃ "
-	ta.CharLimit = 500
+	ta.CharLimit = 2000
 	ta.SetWidth(80)
-	ta.SetHeight(3)
+	ta.SetHeight(1) // Start with one line
 	ta.ShowLineNumbers = false
-	ta.KeyMap.InsertNewline.SetEnabled(false)
+	ta.KeyMap.InsertNewline.SetEnabled(true) // Allow multi-line input
+	// Dynamically expand as user types, max 10 lines
+	ta.MaxHeight = 10
 
 	// Apply uniform grey background to entire textarea
 	ta.FocusedStyle.Base = lipgloss.NewStyle().Background(lipgloss.Color("235"))
@@ -43,6 +48,13 @@ func NewModel() Model {
 
 	vp := viewport.New(80, 20)
 	vp.SetContent("")
+
+	// Load selected model
+	currentModel, _ := settings.LoadSelectedModel()
+	maxTokens := 200000 // default
+	if currentModel != nil {
+		maxTokens = currentModel.MaxTokens
+	}
 
 	return Model{
 		textarea:       ta,
@@ -53,6 +65,8 @@ func NewModel() Model {
 		inputTokens:    0,
 		outputTokens:   0,
 		sidebarVisible: true,
+		currentModel:   currentModel,
+		maxTokens:      maxTokens,
 	}
 }
 
@@ -65,9 +79,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		tiCmd tea.Cmd
 		vpCmd tea.Cmd
 	)
-
-	m.textarea, tiCmd = m.textarea.Update(msg)
-	m.viewport, vpCmd = m.viewport.Update(msg)
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -116,42 +127,55 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyEnter:
-			userInput := strings.TrimSpace(m.textarea.Value())
-			if userInput == "" {
-				break
+			// Plain Enter (without Alt) sends the message
+			// Alt+Enter is handled by the textarea for new lines
+			if !msg.Alt {
+				userInput := strings.TrimSpace(m.textarea.Value())
+				if userInput == "" {
+					// Let textarea handle it if empty
+					break
+				}
+
+				// Add user message
+				m.messages = append(m.messages, chatbot.Message{
+					Role:    chatbot.RoleUser,
+					Content: userInput,
+				})
+
+				// Track input tokens
+				m.inputTokens += estimateTokens(userInput)
+
+				// Get bot response
+				response := m.bot.GetResponse(userInput)
+				m.messages = append(m.messages, chatbot.Message{
+					Role:    chatbot.RoleBot,
+					Content: response,
+				})
+
+				// Track output tokens
+				m.outputTokens += estimateTokens(response)
+
+				// Update viewport
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+
+				// Clear textarea
+				m.textarea.Reset()
+
+				// Don't let the textarea process this Enter
+				m.viewport, vpCmd = m.viewport.Update(msg)
+				return m, vpCmd
 			}
-
-			// Add user message
-			m.messages = append(m.messages, chatbot.Message{
-				Role:    chatbot.RoleUser,
-				Content: userInput,
-			})
-
-			// Track input tokens
-			m.inputTokens += estimateTokens(userInput)
-
-			// Get bot response
-			response := m.bot.GetResponse(userInput)
-			m.messages = append(m.messages, chatbot.Message{
-				Role:    chatbot.RoleBot,
-				Content: response,
-			})
-
-			// Track output tokens
-			m.outputTokens += estimateTokens(response)
-
-			// Update viewport
-			m.viewport.SetContent(m.renderMessages())
-			m.viewport.GotoBottom()
-
-			// Clear textarea
-			m.textarea.Reset()
 		}
 
 	case error:
 		m.err = msg
 		return m, nil
 	}
+
+	// Let textarea and viewport handle all other messages
+	m.textarea, tiCmd = m.textarea.Update(msg)
+	m.viewport, vpCmd = m.viewport.Update(msg)
 
 	return m, tea.Batch(tiCmd, vpCmd)
 }
@@ -197,7 +221,7 @@ func (m Model) View() string {
 
 func (m Model) renderHeader() string {
 	title := titleStyle.Render("🤖 ChatBot TUI")
-	subtitle := subtitleStyle.Render("Press Ctrl+C or Esc to quit | Ctrl+N to toggle sidebar")
+	subtitle := subtitleStyle.Render("Ctrl+C/Esc: quit | Ctrl+N: toggle sidebar | Alt+Enter: new line")
 
 	line := strings.Repeat("─", max(0, m.width-2))
 
@@ -290,7 +314,7 @@ func wrapText(text string, width int) string {
 
 func (m Model) renderFooter() string {
 	info := infoStyle.Render(
-		"Enter: Send | Esc: Quit | Messages: " +
+		"Enter: Send | Alt+Enter: New Line | Esc: Quit | Messages: " +
 			lipgloss.NewStyle().Bold(true).Render(string(rune(len(m.messages)))),
 	)
 
@@ -316,13 +340,18 @@ func estimateTokens(text string) int {
 }
 
 func (m Model) renderSidebar() string {
-	const maxTokens = 200000 // Claude Sonnet 4.5 token limit
 	totalTokens := m.inputTokens + m.outputTokens
-	remainingTokens := maxTokens - totalTokens
-	percentUsed := float64(totalTokens) / float64(maxTokens) * 100
+	remainingTokens := m.maxTokens - totalTokens
+	percentUsed := float64(totalTokens) / float64(m.maxTokens) * 100
 
 	title := sidebarTitleStyle.Render("Token Usage")
 	divider := strings.Repeat("─", 26)
+
+	// Get model name
+	modelName := "Claude Sonnet 4.5" // default
+	if m.currentModel != nil {
+		modelName = m.currentModel.Name
+	}
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -347,7 +376,7 @@ func (m Model) renderSidebar() string {
 		lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(divider),
 		"",
 		sidebarLabelStyle.Render("Model:"),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render("  Claude Sonnet 4.5"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(fmt.Sprintf("  %s", modelName)),
 	)
 
 	// Apply sidebar style with proper height constraint
