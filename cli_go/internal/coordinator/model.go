@@ -5,6 +5,7 @@ import (
 	"github.com/yourusername/chatbot-tui/extensions/tamagotchi/pet"
 	tamagotchiTui "github.com/yourusername/chatbot-tui/extensions/tamagotchi/tui"
 	"github.com/yourusername/chatbot-tui/internal/extensions"
+	"github.com/yourusername/chatbot-tui/internal/settings"
 	"github.com/yourusername/chatbot-tui/internal/tui"
 )
 
@@ -15,6 +16,7 @@ const (
 	ChatView ViewType = iota
 	ExtensionsView
 	TamagotchiView
+	SettingsView
 )
 
 // SwitchToExtensionsMsg signals to show extensions browser
@@ -34,6 +36,7 @@ type Model struct {
 	chatModel       tui.Model
 	extensionsModel extensions.Model
 	tamagotchiModel tamagotchiTui.Model
+	settingsModel   settings.SettingsModel
 	width           int
 	height          int
 }
@@ -69,6 +72,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tmpModel, _ = m.tamagotchiModel.Update(msg)
 			m.tamagotchiModel = tmpModel.(tamagotchiTui.Model)
 		}
+		if m.currentView == SettingsView {
+			tmpModel, _ = m.settingsModel.Update(msg)
+			m.settingsModel = tmpModel.(settings.SettingsModel)
+		}
 
 	case tea.KeyMsg:
 		// Global Ctrl+A handling
@@ -80,6 +87,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.extensionsModel = extensions.NewModel()
 				return m, m.extensionsModel.Init()
 			case ExtensionsView, TamagotchiView:
+				// Switch back to chat
+				m.currentView = ChatView
+				return m, nil
+			}
+		}
+
+		// Global Ctrl+Y handling for Settings
+		if msg.String() == "ctrl+y" {
+			if m.currentView == ChatView {
+				// Switch to settings
+				m.currentView = SettingsView
+				m.settingsModel = settings.NewSettingsModel()
+				return m, m.settingsModel.Init()
+			} else if m.currentView == SettingsView {
 				// Switch back to chat
 				m.currentView = ChatView
 				return m, nil
@@ -147,6 +168,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, cmd
+
+	case SettingsView:
+		var newModel tea.Model
+		newModel, cmd = m.settingsModel.Update(msg)
+		m.settingsModel = newModel.(settings.SettingsModel)
+
+		// Check if user confirmed selection (pressed Enter)
+		if m.settingsModel.Confirmed() {
+			// Return to chat after confirming model selection
+			m.currentView = ChatView
+			// Reload model settings without losing chat history
+			m.chatModel.ReloadModelSettings()
+			return m, nil
+		}
+		return m, cmd
 	}
 
 	return m, cmd
@@ -160,6 +196,8 @@ func (m Model) View() string {
 		return m.extensionsModel.View()
 	case TamagotchiView:
 		return m.tamagotchiModel.View()
+	case SettingsView:
+		return m.settingsModel.View()
 	default:
 		return "Unknown view"
 	}

@@ -77,6 +77,18 @@ func (m Model) Init() tea.Cmd {
 	return textarea.Blink
 }
 
+// ReloadModelSettings reloads the current model settings from config
+// This is useful when the user changes the model in settings
+func (m *Model) ReloadModelSettings() {
+	currentModel, _ := settings.LoadSelectedModel()
+	maxTokens := 200000 // default
+	if currentModel != nil {
+		maxTokens = currentModel.MaxTokens
+	}
+	m.currentModel = currentModel
+	m.maxTokens = maxTokens
+}
+
 // isFullScreen determines if terminal is in full screen mode
 // We consider full screen when width >= 120 columns (enough for sidebar + content)
 func (m Model) isFullScreen() bool {

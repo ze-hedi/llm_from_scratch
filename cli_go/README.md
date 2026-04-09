@@ -64,6 +64,7 @@ go build -o chatbot-tui .
 
 **Global Navigation:**
 - **Ctrl+A**: Switch between Chat and Extensions browser (state is preserved!)
+- **Ctrl+Y**: Open model settings / Return to chat
 - **Esc**: Return to Chat (from any extension)
 
 **Chat Mode:**
@@ -72,6 +73,11 @@ go build -o chatbot-tui .
 - **Ctrl+N**: Toggle sidebar (only in full screen mode, ≥120 columns)
 - **Ctrl+C** or **Esc**: Quit the application
 - **Arrow Keys**: Navigate through chat history
+
+**Settings Mode:**
+- **↑/↓** or **j/k**: Navigate models
+- **Enter**: Select model and return to chat
+- **Esc** or **Ctrl+Y**: Back to chat without changes
 
 **Slash Commands (in Chat):**
 - **/exit** or **/quit**: Exit the application
