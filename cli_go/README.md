@@ -38,6 +38,13 @@ go build -o chatbot-tui .
 ./chatbot-tui chat
 ```
 
+### Browse Extensions
+
+```bash
+# View and launch available extensions
+./chatbot-tui extensions
+```
+
 ### Play Tamagotchi
 
 ```bash
@@ -60,6 +67,11 @@ go build -o chatbot-tui .
 - **Ctrl+C** or **Esc**: Quit the application
 - **Arrow Keys**: Navigate through chat history
 
+**Extensions Browser:**
+- **↑/↓** or **j/k**: Navigate through extensions
+- **Enter**: Launch selected extension
+- **q** or **Esc**: Quit
+
 **Tamagotchi Mode:**
 - Type commands: `feed`, `play`, `heal`, `status`, `quit`
 - **Enter**: Send command
@@ -73,15 +85,20 @@ go build -o chatbot-tui .
 │   ├── root.go            # Root command
 │   ├── chat.go            # Chat command
 │   ├── settings.go        # Settings command
+│   ├── extensions.go      # Extensions browser
 │   └── tamagotchi.go      # Tamagotchi command
 ├── internal/
 │   ├── tui/               # Chat TUI implementation
 │   │   ├── model.go       # Bubble Tea model
 │   │   └── styles.go      # UI styling
-│   └── settings/          # Settings management
-│       ├── config.go      # Configuration
-│       ├── model.go       # Settings model
-│       └── styles.go      # Settings styles
+│   ├── settings/          # Settings management
+│   │   ├── config.go      # Configuration
+│   │   ├── model.go       # Settings model
+│   │   └── styles.go      # Settings styles
+│   └── extensions/        # Extensions browser
+│       ├── config.go      # Extensions config loader
+│       ├── model.go       # Browser model
+│       └── styles.go      # Browser styles
 ├── extensions/            # Modular extensions
 │   └── tamagotchi/        # Tamagotchi game extension
 │       ├── pet/           # Pet logic
@@ -94,6 +111,8 @@ go build -o chatbot-tui .
 ├── pkg/
 │   └── chatbot/           # Chatbot logic
 │       └── bot.go         # Bot implementation
+├── extensions.json        # Extensions registry
+├── cli_models.json        # AI models configuration
 ├── main.go                # Entry point
 └── README.md              # This file
 ```

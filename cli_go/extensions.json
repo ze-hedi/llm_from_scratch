@@ -1,0 +1,11 @@
+{
+  "extensions": [
+    {
+      "id": "tamagotchi",
+      "name": "Tamagotchi",
+      "description": "Virtual pet game - Care for your digital companion!",
+      "command": "tamagotchi",
+      "icon": "🐾"
+    }
+  ]
+}

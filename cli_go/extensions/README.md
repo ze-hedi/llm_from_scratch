@@ -2,6 +2,16 @@
 
 This directory contains extensions for the chatbot-tui application. Each extension is a self-contained module that adds new functionality to the main application.
 
+## Browsing Extensions
+
+You can browse and launch available extensions using:
+
+```bash
+./chatbot-tui extensions
+```
+
+This will display an interactive list of all available extensions. Use arrow keys to navigate and press Enter to launch.
+
 ## Available Extensions
 
 ### Tamagotchi
@@ -32,4 +42,15 @@ To create a new extension:
 1. Create a new directory under `extensions/`
 2. Implement your extension's logic
 3. Create a new command file in `cmd/` that integrates your extension
-4. Update this README with information about your extension
+4. Add your extension to `extensions.json` in the project root:
+   ```json
+   {
+     "id": "your-extension-id",
+     "name": "Extension Name",
+     "description": "Brief description of what it does",
+     "command": "command-name",
+     "icon": "🎮"
+   }
+   ```
+5. Update the `cmd/extensions.go` file to handle your new command
+6. Update this README with information about your extension
