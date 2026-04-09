@@ -7,6 +7,7 @@ A beautiful terminal-based chatbot interface built with Go, Bubble Tea, and Cobr
 - **Interactive TUI**: Beautiful terminal user interface with smooth scrolling
 - **Real-time Chat**: Instant responses with an intelligent mock chatbot
 - **Seamless Navigation**: Press Ctrl+A to switch between Chat and Extensions (state preserved!)
+- **Smart Sidebar**: Token usage sidebar auto-shows in full screen mode (≥120 columns)
 - **Keyboard Controls**: Fully keyboard-driven interface
 - **Responsive Design**: Adapts to terminal window size
 - **Clean Architecture**: Well-organized Go project structure
@@ -68,7 +69,7 @@ go build -o chatbot-tui .
 **Chat Mode:**
 - **Enter**: Send message
 - **Alt+Enter**: New line
-- **Ctrl+N**: Toggle sidebar
+- **Ctrl+N**: Toggle sidebar (only in full screen mode, ≥120 columns)
 - **Ctrl+C** or **Esc**: Quit the application
 - **Arrow Keys**: Navigate through chat history
 
@@ -101,6 +102,16 @@ The chat interface supports slash commands for special actions. Simply type the 
 - `/exit` or `/quit` - Exit the application gracefully
 
 More commands can be added in the future!
+
+### Sidebar Behavior
+
+The token usage sidebar is **intelligent and responsive**:
+- **Auto-shows** when your terminal is in full screen mode (≥120 columns wide)
+- **Auto-hides** when terminal is smaller to maximize chat space
+- **Toggle with Ctrl+N** (only available in full screen mode)
+- Shows real-time token tracking, usage percentage, and current AI model
+
+**Tip:** Maximize your terminal window to see the sidebar!
 
 ## Project Structure
 

@@ -77,6 +77,12 @@ func (m Model) Init() tea.Cmd {
 	return textarea.Blink
 }
 
+// isFullScreen determines if terminal is in full screen mode
+// We consider full screen when width >= 120 columns (enough for sidebar + content)
+func (m Model) isFullScreen() bool {
+	return m.width >= 120
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var (
 		tiCmd tea.Cmd
@@ -88,9 +94,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
+		// Auto-hide sidebar if not in full screen mode
+		// Only show sidebar when terminal is wide enough (full screen)
+		canShowSidebar := m.isFullScreen()
+
 		// Account for sidebar width (30 chars + 4 for borders/padding)
 		sidebarWidth := 0
-		if m.sidebarVisible {
+		if m.sidebarVisible && canShowSidebar {
 			sidebarWidth = 34
 		}
 		mainWidth := msg.Width - sidebarWidth
@@ -111,6 +121,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyCtrlN:
+			// Only allow toggling sidebar in full screen mode
+			if !m.isFullScreen() {
+				// Ignore Ctrl+N when not in full screen
+				return m, nil
+			}
+
 			// Toggle sidebar visibility
 			m.sidebarVisible = !m.sidebarVisible
 
@@ -231,9 +247,12 @@ func (m Model) View() string {
 		return "Initializing..."
 	}
 
+	// Only show sidebar if in full screen mode AND user wants it visible
+	canShowSidebar := m.isFullScreen() && m.sidebarVisible
+
 	// Calculate widths
 	sidebarWidth := 0
-	if m.sidebarVisible {
+	if canShowSidebar {
 		sidebarWidth = 34 // 30 + 4 for borders/padding
 	}
 	mainWidth := m.width - sidebarWidth
@@ -252,8 +271,8 @@ func (m Model) View() string {
 			footer,
 		))
 
-	// If sidebar is visible, join it with main content
-	if m.sidebarVisible {
+	// If sidebar is visible AND in full screen, join it with main content
+	if canShowSidebar {
 		sidebar := m.renderSidebar()
 		return lipgloss.JoinHorizontal(
 			lipgloss.Top,
@@ -267,7 +286,15 @@ func (m Model) View() string {
 
 func (m Model) renderHeader(width int) string {
 	title := titleStyle.Render("🤖 ChatBot TUI")
-	subtitle := subtitleStyle.Render("Ctrl+A: extensions | Ctrl+N: sidebar | Alt+Enter: new line | Esc: quit")
+
+	// Only show Ctrl+N hint when in full screen mode
+	var subtitleText string
+	if m.isFullScreen() {
+		subtitleText = "Ctrl+A: extensions | Ctrl+N: sidebar | Alt+Enter: new line | Esc: quit"
+	} else {
+		subtitleText = "Ctrl+A: extensions | Alt+Enter: new line | Esc: quit"
+	}
+	subtitle := subtitleStyle.Render(subtitleText)
 
 	line := strings.Repeat("─", max(0, width-2))
 
