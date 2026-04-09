@@ -390,7 +390,7 @@ func (m Model) renderSidebar() string {
 	remainingTokens := m.maxTokens - totalTokens
 	percentUsed := float64(totalTokens) / float64(m.maxTokens) * 100
 
-	title := sidebarTitleStyle.Render("Token Usage")
+	title := sidebarTitleStyle.Render("📊 Token Usage")
 	divider := strings.Repeat("─", 26)
 
 	// Get model name
@@ -421,7 +421,7 @@ func (m Model) renderSidebar() string {
 		"",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(divider),
 		"",
-		sidebarLabelStyle.Render("Model:"),
+		sidebarLabelStyle.Render("🤖 Model:"),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(fmt.Sprintf("  %s", modelName)),
 	)
 
