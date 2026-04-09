@@ -6,6 +6,7 @@ A beautiful terminal-based chatbot interface built with Go, Bubble Tea, and Cobr
 
 - **Interactive TUI**: Beautiful terminal user interface with smooth scrolling
 - **Real-time Chat**: Instant responses with an intelligent mock chatbot
+- **Seamless Navigation**: Press Ctrl+A to switch between Chat and Extensions (state preserved!)
 - **Keyboard Controls**: Fully keyboard-driven interface
 - **Responsive Design**: Adapts to terminal window size
 - **Clean Architecture**: Well-organized Go project structure
@@ -60,6 +61,10 @@ go build -o chatbot-tui .
 
 ### Keyboard Controls
 
+**Global Navigation:**
+- **Ctrl+A**: Switch between Chat and Extensions browser (state is preserved!)
+- **Esc**: Return to Chat (from any extension)
+
 **Chat Mode:**
 - **Enter**: Send message
 - **Alt+Enter**: New line
@@ -70,12 +75,20 @@ go build -o chatbot-tui .
 **Extensions Browser:**
 - **↑/↓** or **j/k**: Navigate through extensions
 - **Enter**: Launch selected extension
-- **q** or **Esc**: Quit
+- **Ctrl+A** or **Esc**: Back to Chat
 
 **Tamagotchi Mode:**
 - Type commands: `feed`, `play`, `heal`, `status`, `quit`
 - **Enter**: Send command
-- **Ctrl+C** or **Esc**: Quit the game
+- **Ctrl+A** or **Esc**: Back to Chat
+
+### Quick Navigation Workflow
+
+1. Start chatting: `./chatbot-tui chat`
+2. Press **Ctrl+A** to browse extensions while keeping your chat history
+3. Select and launch an extension (e.g., Tamagotchi)
+4. Press **Ctrl+A** to return to your chat - all messages preserved!
+5. Switch back and forth as much as you want - everything stays in memory
 
 ## Project Structure
 
@@ -88,6 +101,8 @@ go build -o chatbot-tui .
 │   ├── extensions.go      # Extensions browser
 │   └── tamagotchi.go      # Tamagotchi command
 ├── internal/
+│   ├── coordinator/       # Main navigation coordinator
+│   │   └── model.go       # Manages view switching
 │   ├── tui/               # Chat TUI implementation
 │   │   ├── model.go       # Bubble Tea model
 │   │   └── styles.go      # UI styling

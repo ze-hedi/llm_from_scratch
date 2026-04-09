@@ -80,7 +80,7 @@ func (m Model) View() string {
 	// Header
 	header := titleStyle.Render("🧩 Available Extensions")
 	subtitle := subtitleStyle.Render("Select an extension to launch")
-	instructions := instructionsStyle.Render("↑/↓ or j/k: Navigate | Enter: Launch | q/Esc: Quit")
+	instructions := instructionsStyle.Render("↑/↓ or j/k: Navigate | Enter: Launch | Ctrl+A/Esc: Back to Chat")
 
 	// Extensions list
 	var extensionsList string

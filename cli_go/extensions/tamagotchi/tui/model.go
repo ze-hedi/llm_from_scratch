@@ -155,7 +155,7 @@ func (m Model) View() string {
 
 func (m Model) renderHeader() string {
 	title := titleStyle.Render("🐾 Tamagotchi Game")
-	subtitle := subtitleStyle.Render(fmt.Sprintf("Keep %s alive! Commands: feed, play, heal, status", m.pet.Name))
+	subtitle := subtitleStyle.Render(fmt.Sprintf("Keep %s alive! Commands: feed, play, heal, status | Ctrl+A: Back to Chat", m.pet.Name))
 	line := strings.Repeat("─", max(0, m.width-2))
 
 	return lipgloss.JoinVertical(
@@ -218,4 +218,9 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// GetPet returns the pet instance for saving
+func (m Model) GetPet() *pet.Pet {
+	return m.pet
 }

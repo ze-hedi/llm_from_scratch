@@ -6,15 +6,15 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
-	"github.com/yourusername/chatbot-tui/internal/tui"
+	"github.com/yourusername/chatbot-tui/internal/coordinator"
 )
 
 var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "Start an interactive chat session",
-	Long:  `Launch the TUI interface and start chatting with the bot.`,
+	Long:  `Launch the TUI interface and start chatting with the bot. Press Ctrl+A to browse extensions.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		model := tui.NewModel()
+		model := coordinator.NewModel()
 		p := tea.NewProgram(
 			model,
 			tea.WithAltScreen(),

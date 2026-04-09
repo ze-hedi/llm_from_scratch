@@ -221,7 +221,7 @@ func (m Model) View() string {
 
 func (m Model) renderHeader() string {
 	title := titleStyle.Render("🤖 ChatBot TUI")
-	subtitle := subtitleStyle.Render("Ctrl+C/Esc: quit | Ctrl+N: toggle sidebar | Alt+Enter: new line")
+	subtitle := subtitleStyle.Render("Ctrl+A: extensions | Ctrl+N: sidebar | Alt+Enter: new line | Esc: quit")
 
 	line := strings.Repeat("─", max(0, m.width-2))
 
