@@ -238,7 +238,7 @@ func (m Model) View() string {
 	}
 	mainWidth := m.width - sidebarWidth
 
-	header := m.renderHeader()
+	header := m.renderHeader(mainWidth)
 	content := m.viewport.View()
 	footer := m.renderFooter()
 
@@ -265,11 +265,11 @@ func (m Model) View() string {
 	return mainContent
 }
 
-func (m Model) renderHeader() string {
+func (m Model) renderHeader(width int) string {
 	title := titleStyle.Render("🤖 ChatBot TUI")
 	subtitle := subtitleStyle.Render("Ctrl+A: extensions | Ctrl+N: sidebar | Alt+Enter: new line | Esc: quit")
 
-	line := strings.Repeat("─", max(0, m.width-2))
+	line := strings.Repeat("─", max(0, width-2))
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
