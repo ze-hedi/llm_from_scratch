@@ -1,0 +1,11 @@
+{
+  "gateway": {
+    "mode": "local"
+  },
+  "agents": {
+    "defaults": {
+      "model": "claude-sonnet-4-6",
+      "workspace": "~/.openclaw/workspace"
+    }
+  }
+}
