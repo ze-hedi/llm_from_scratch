@@ -12,11 +12,13 @@ A beautiful terminal-based chatbot interface built with Go, Bubble Tea, and Cobr
 - **Responsive Design**: Adapts to terminal window size
 - **Clean Architecture**: Well-organized Go project structure
 - **Extensions**: Modular extension system with built-in Tamagotchi game
+- **Web Terminal**: Browser-based terminal with support for up to 10 simultaneous shells
 
 ## Prerequisites
 
 - Go 1.18 or higher
 - Terminal with UTF-8 support
+- Node.js and npm (for web terminal server)
 
 ## Installation
 
@@ -59,6 +61,36 @@ go build -o chatbot-tui .
 # Reset your pet
 ./chatbot-tui tamagotchi reset
 ```
+
+### Web Terminal Server
+
+Launch a browser-based terminal with support for multiple simultaneous shell sessions:
+
+```bash
+# Install dependencies (first time only)
+npm install
+
+# Start the web terminal server
+node server.js
+```
+
+Then open your browser to `http://localhost:3000`
+
+**Features:**
+- **Multiple Terminals**: Click "Launch Terminal" up to 10 times to create separate shell instances
+- **Independent Sessions**: Each terminal runs its own shell process
+- **Real-time Updates**: Live terminal output with full xterm.js support
+- **Easy Management**: Close individual terminals with the close button
+- **Session Counter**: Button shows current active terminals (e.g., "Launch Terminal (3/10)")
+- **Auto-disable**: Button automatically disables when max limit (10) is reached
+- **Clean Cleanup**: Properly closes WebSocket connections and cleans up resources
+
+**Usage:**
+1. Click "Launch Terminal" to create a new shell
+2. Each terminal is numbered (Terminal #1, Terminal #2, etc.)
+3. Use the close button on any terminal to remove it
+4. Launch up to 10 terminals simultaneously
+5. When a terminal disconnects, it's automatically removed from the list
 
 ### Keyboard Controls
 
@@ -159,6 +191,9 @@ The token usage sidebar is **intelligent and responsive**:
 │       └── bot.go         # Bot implementation
 ├── extensions.json        # Extensions registry
 ├── cli_models.json        # AI models configuration
+├── index.html             # Web terminal frontend
+├── server.js              # Web terminal server (Node.js)
+├── package.json           # Node.js dependencies
 ├── main.go                # Entry point
 └── README.md              # This file
 ```
@@ -234,6 +269,7 @@ var customStyle = lipgloss.NewStyle().
 
 ## Future Enhancements
 
+### ChatBot TUI
 - [ ] Integrate with real AI APIs (OpenAI, Anthropic, etc.)
 - [ ] Persistent chat history
 - [ ] Multiple conversation threads
@@ -242,6 +278,14 @@ var customStyle = lipgloss.NewStyle().
 - [ ] Export conversations
 - [ ] Typing indicators
 - [ ] Message timestamps
+
+### Web Terminal
+- [x] Multiple terminal instances (up to 10)
+- [ ] Terminal session persistence
+- [ ] Customizable terminal themes
+- [ ] File upload/download support
+- [ ] Terminal sharing and collaboration
+- [ ] Authentication and security
 
 ## Contributing
 

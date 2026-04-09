@@ -20,14 +20,16 @@ type Message struct {
 }
 
 type Bot struct {
-	name   string
-	random *rand.Rand
+	name         string
+	random       *rand.Rand
+	SystemPrompt string
 }
 
 func NewBot() *Bot {
 	return &Bot{
-		name:   "ChatBot",
-		random: rand.New(rand.NewSource(time.Now().UnixNano())),
+		name:         "ChatBot",
+		random:       rand.New(rand.NewSource(time.Now().UnixNano())),
+		SystemPrompt: "You are a helpful AI assistant. Be friendly and conversational.",
 	}
 }
 
