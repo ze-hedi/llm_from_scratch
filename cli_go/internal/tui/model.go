@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/yourusername/chatbot-tui/internal/commands"
 	"github.com/yourusername/chatbot-tui/internal/settings"
 	"github.com/yourusername/chatbot-tui/pkg/chatbot"
 )
@@ -17,6 +18,7 @@ type Model struct {
 	textarea       textarea.Model
 	messages       []chatbot.Message
 	bot            *chatbot.Bot
+	cmdHandler     *commands.Handler
 	width          int
 	height         int
 	ready          bool
@@ -61,6 +63,7 @@ func NewModel() Model {
 		viewport:       vp,
 		messages:       []chatbot.Message{},
 		bot:            chatbot.NewBot(),
+		cmdHandler:     commands.NewHandler(),
 		ready:          false,
 		inputTokens:    0,
 		outputTokens:   0,
@@ -136,6 +139,49 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 
+				// Check if it's a command
+				cmdResult := m.cmdHandler.Process(userInput)
+
+				if cmdResult.IsCommand {
+					// It's a command - handle it
+					if cmdResult.ErrorMessage != "" {
+						// Command error
+						m.messages = append(m.messages, chatbot.Message{
+							Role:    chatbot.RoleUser,
+							Content: userInput,
+						})
+						m.messages = append(m.messages, chatbot.Message{
+							Role:    chatbot.RoleBot,
+							Content: "❌ " + cmdResult.ErrorMessage,
+						})
+					} else if cmdResult.Message != "" {
+						// Command success with message
+						m.messages = append(m.messages, chatbot.Message{
+							Role:    chatbot.RoleUser,
+							Content: userInput,
+						})
+						m.messages = append(m.messages, chatbot.Message{
+							Role:    chatbot.RoleBot,
+							Content: cmdResult.Message,
+						})
+					}
+
+					// Update viewport
+					m.viewport.SetContent(m.renderMessages())
+					m.viewport.GotoBottom()
+
+					// Clear textarea
+					m.textarea.Reset()
+
+					// Check if we should quit
+					if cmdResult.ShouldQuit {
+						return m, tea.Quit
+					}
+
+					return m, nil
+				}
+
+				// Not a command - normal chat message
 				// Add user message
 				m.messages = append(m.messages, chatbot.Message{
 					Role:    chatbot.RoleUser,
@@ -314,7 +360,7 @@ func wrapText(text string, width int) string {
 
 func (m Model) renderFooter() string {
 	info := infoStyle.Render(
-		"Enter: Send | Alt+Enter: New Line | Esc: Quit | Messages: " +
+		"Enter: Send | Alt+Enter: New Line | /exit: Quit | Esc: Quit | Messages: " +
 			lipgloss.NewStyle().Bold(true).Render(string(rune(len(m.messages)))),
 	)
 

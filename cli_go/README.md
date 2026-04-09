@@ -72,6 +72,9 @@ go build -o chatbot-tui .
 - **Ctrl+C** or **Esc**: Quit the application
 - **Arrow Keys**: Navigate through chat history
 
+**Slash Commands (in Chat):**
+- **/exit** or **/quit**: Exit the application
+
 **Extensions Browser:**
 - **↑/↓** or **j/k**: Navigate through extensions
 - **Enter**: Launch selected extension
@@ -90,6 +93,15 @@ go build -o chatbot-tui .
 4. Press **Ctrl+A** to return to your chat - all messages preserved!
 5. Switch back and forth as much as you want - everything stays in memory
 
+### Slash Commands
+
+The chat interface supports slash commands for special actions. Simply type the command in the input field and press Enter.
+
+**Available Commands:**
+- `/exit` or `/quit` - Exit the application gracefully
+
+More commands can be added in the future!
+
 ## Project Structure
 
 ```
@@ -103,6 +115,8 @@ go build -o chatbot-tui .
 ├── internal/
 │   ├── coordinator/       # Main navigation coordinator
 │   │   └── model.go       # Manages view switching
+│   ├── commands/          # Slash command handlers
+│   │   └── handler.go     # Command processing
 │   ├── tui/               # Chat TUI implementation
 │   │   ├── model.go       # Bubble Tea model
 │   │   └── styles.go      # UI styling
