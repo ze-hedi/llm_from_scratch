@@ -1,10 +1,17 @@
 package chatbot
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
+	"net/http"
 	"strings"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type Role string
@@ -19,10 +26,40 @@ type Message struct {
 	Content string
 }
 
+// Streaming message types for Bubble Tea
+type StreamChunkMsg struct {
+	Chunk string
+}
+
+type StreamDoneMsg struct{}
+
+type StreamErrorMsg struct {
+	Err error
+}
+
+// Agent info message types
+type AgentInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type FetchAgentListMsg struct{} // Trigger to fetch agent list
+
+type AgentListMsg struct {
+	Agents []AgentInfo
+}
+
+type AgentListErrorMsg struct {
+	Err error
+}
+
 type Bot struct {
 	name         string
 	random       *rand.Rand
 	SystemPrompt string
+	httpClient   *http.Client
+	agentURL     string
+	useAgent     bool // Toggle between pattern-matching and real agent
 }
 
 func NewBot() *Bot {
@@ -30,10 +67,17 @@ func NewBot() *Bot {
 		name:         "ChatBot",
 		random:       rand.New(rand.NewSource(time.Now().UnixNano())),
 		SystemPrompt: "You are a helpful AI assistant. Be friendly and conversational.",
+		httpClient: &http.Client{
+			Timeout: 5 * time.Minute, // Long timeout for streaming
+		},
+		agentURL: "http://localhost:8001/agent",
+		useAgent: true, // Set to false to use pattern-matching bot
 	}
 }
 
 func (b *Bot) GetResponse(input string) string {
+	// Note: SystemPrompt is available and would be used when integrating with a real LLM API
+	// For this pattern-matching bot, the SystemPrompt is stored but not actively used in responses
 	input = strings.ToLower(strings.TrimSpace(input))
 
 	// Pattern matching for intelligent responses
@@ -115,4 +159,117 @@ func (b *Bot) generateThought(input string) string {
 		"Based on what you're asking, I'd say it's quite nuanced. Want to dive deeper?",
 	}
 	return b.randomChoice(thoughts)
+}
+
+// GetResponseStream returns a tea.Cmd that streams responses from the agent
+func (b *Bot) GetResponseStream(input string) tea.Cmd {
+	// If agent is disabled, fall back to pattern matching
+	if !b.useAgent {
+		return func() tea.Msg {
+			response := b.GetResponse(input)
+			return StreamChunkMsg{Chunk: response}
+		}
+	}
+
+	return func() tea.Msg {
+		// Prepare request body
+		reqBody := map[string]interface{}{
+			"message":       input,
+			"system_prompt": b.SystemPrompt,
+		}
+		jsonData, err := json.Marshal(reqBody)
+		if err != nil {
+			return StreamErrorMsg{Err: fmt.Errorf("failed to marshal request: %w", err)}
+		}
+
+		// Make HTTP POST request
+		req, err := http.NewRequest("POST", b.agentURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return StreamErrorMsg{Err: fmt.Errorf("failed to create request: %w", err)}
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := b.httpClient.Do(req)
+		if err != nil {
+			return StreamErrorMsg{Err: fmt.Errorf("failed to connect to agent: %w", err)}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return StreamErrorMsg{Err: fmt.Errorf("agent error (status %d): %s", resp.StatusCode, string(body))}
+		}
+
+		// Stream the response
+		return b.streamResponse(resp.Body)
+	}
+}
+
+// streamResponse reads the streaming response and returns chunks
+func (b *Bot) streamResponse(body io.Reader) tea.Msg {
+	var fullResponse strings.Builder
+	scanner := bufio.NewScanner(body)
+
+	for scanner.Scan() {
+		chunk := scanner.Text()
+		if chunk != "" {
+			fullResponse.WriteString(chunk)
+			fullResponse.WriteString("\n")
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return StreamErrorMsg{Err: fmt.Errorf("error reading stream: %w", err)}
+	}
+
+	// For now, return the full response at once
+	// TODO: Make this truly streaming by sending chunks incrementally
+	return StreamChunkMsg{Chunk: fullResponse.String()}
+}
+
+// SetAgentURL updates the agent endpoint URL
+func (b *Bot) SetAgentURL(url string) {
+	b.agentURL = url
+}
+
+// SetUseAgent enables or disables the agent (falls back to pattern matching if disabled)
+func (b *Bot) SetUseAgent(use bool) {
+	b.useAgent = use
+}
+
+// IsUsingAgent returns whether the bot is using the real agent
+func (b *Bot) IsUsingAgent() bool {
+	return b.useAgent
+}
+
+// GetAgentList fetches the list of available agents from the server
+func (b *Bot) GetAgentList() tea.Cmd {
+	return func() tea.Msg {
+		// Build the URL for the getagent endpoint
+		getAgentURL := strings.Replace(b.agentURL, "/agent", "/getagent", 1)
+
+		// Make HTTP GET request
+		req, err := http.NewRequest("GET", getAgentURL, nil)
+		if err != nil {
+			return AgentListErrorMsg{Err: fmt.Errorf("failed to connect to server")}
+		}
+
+		resp, err := b.httpClient.Do(req)
+		if err != nil {
+			return AgentListErrorMsg{Err: fmt.Errorf("failed to connect to server")}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return AgentListErrorMsg{Err: fmt.Errorf("failed to connect to server")}
+		}
+
+		// Parse the response
+		var agents []AgentInfo
+		if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
+			return AgentListErrorMsg{Err: fmt.Errorf("failed to connect to server")}
+		}
+
+		return AgentListMsg{Agents: agents}
+	}
 }

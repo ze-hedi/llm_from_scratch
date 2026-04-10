@@ -6,7 +6,9 @@ import (
 	tamagotchiTui "github.com/yourusername/chatbot-tui/extensions/tamagotchi/tui"
 	"github.com/yourusername/chatbot-tui/internal/extensions"
 	"github.com/yourusername/chatbot-tui/internal/settings"
+	"github.com/yourusername/chatbot-tui/internal/systemprompt"
 	"github.com/yourusername/chatbot-tui/internal/tui"
+	"github.com/yourusername/chatbot-tui/pkg/chatbot"
 )
 
 // ViewType represents the current active view
@@ -17,6 +19,7 @@ const (
 	ExtensionsView
 	TamagotchiView
 	SettingsView
+	SystemPromptView
 )
 
 // SwitchToExtensionsMsg signals to show extensions browser
@@ -32,13 +35,14 @@ type LaunchExtensionMsg struct {
 
 // Model is the coordinator that manages different views
 type Model struct {
-	currentView     ViewType
-	chatModel       tui.Model
-	extensionsModel extensions.Model
-	tamagotchiModel tamagotchiTui.Model
-	settingsModel   settings.SettingsModel
-	width           int
-	height          int
+	currentView       ViewType
+	chatModel         tui.Model
+	extensionsModel   extensions.Model
+	tamagotchiModel   tamagotchiTui.Model
+	settingsModel     settings.SettingsModel
+	systemPromptModel systemprompt.SystemPromptModel
+	width             int
+	height            int
 }
 
 // NewModel creates a new coordinator model starting with chat
@@ -76,8 +80,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tmpModel, _ = m.settingsModel.Update(msg)
 			m.settingsModel = tmpModel.(settings.SettingsModel)
 		}
+		if m.currentView == SystemPromptView {
+			tmpModel, _ = m.systemPromptModel.Update(msg)
+			m.systemPromptModel = tmpModel.(systemprompt.SystemPromptModel)
+		}
 
 	case tea.KeyMsg:
+		// Global Ctrl+G handling for Agent List
+		if msg.String() == "ctrl+g" {
+			if m.currentView == ChatView {
+				// Send fetch trigger to chat model
+				var tmpModel tea.Model
+				var cmd tea.Cmd
+				tmpModel, cmd = m.chatModel.Update(chatbot.FetchAgentListMsg{})
+				m.chatModel = tmpModel.(tui.Model)
+				return m, cmd
+			}
+		}
+
 		// Global Ctrl+A handling
 		if msg.String() == "ctrl+a" {
 			switch m.currentView {
@@ -107,6 +127,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Global Ctrl+S handling for System Prompt
+		if msg.String() == "ctrl+s" {
+			if m.currentView == ChatView {
+				// Switch to system prompt editor
+				m.currentView = SystemPromptView
+				currentPrompt := m.chatModel.GetBot().SystemPrompt
+				m.systemPromptModel = systemprompt.NewSystemPromptModel(currentPrompt)
+				return m, m.systemPromptModel.Init()
+			} else if m.currentView == SystemPromptView {
+				// Switch back to chat
+				m.currentView = ChatView
+				return m, nil
+			}
+		}
+
 		// Handle Ctrl+C and Esc globally
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
@@ -117,7 +152,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentView == ChatView {
 				return m, tea.Quit
 			} else {
-				// Return to chat
+				// Return to chat (cancel any changes)
 				m.currentView = ChatView
 				return m, nil
 			}
@@ -183,6 +218,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, cmd
+
+	case SystemPromptView:
+		var newModel tea.Model
+		newModel, cmd = m.systemPromptModel.Update(msg)
+		m.systemPromptModel = newModel.(systemprompt.SystemPromptModel)
+
+		// Check if user confirmed (pressed Ctrl+S)
+		if m.systemPromptModel.Confirmed() {
+			// Update the bot's system prompt
+			m.chatModel.GetBot().SystemPrompt = m.systemPromptModel.GetPrompt()
+			// Return to chat
+			m.currentView = ChatView
+			return m, nil
+		}
+		return m, cmd
 	}
 
 	return m, cmd
@@ -198,6 +248,8 @@ func (m Model) View() string {
 		return m.tamagotchiModel.View()
 	case SettingsView:
 		return m.settingsModel.View()
+	case SystemPromptView:
+		return m.systemPromptModel.View()
 	default:
 		return "Unknown view"
 	}

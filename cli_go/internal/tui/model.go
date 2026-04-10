@@ -28,6 +28,7 @@ type Model struct {
 	sidebarVisible bool
 	currentModel   *settings.Model
 	maxTokens      int
+	isStreaming    bool // Track if we're currently receiving a stream
 }
 
 func NewModel() Model {
@@ -219,15 +220,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Track input tokens
 				m.inputTokens += estimateTokens(userInput)
 
-				// Get bot response
-				response := m.bot.GetResponse(userInput)
+				// Add empty bot message that will be filled by streaming
 				m.messages = append(m.messages, chatbot.Message{
 					Role:    chatbot.RoleBot,
-					Content: response,
+					Content: "⏳ Thinking...",
 				})
-
-				// Track output tokens
-				m.outputTokens += estimateTokens(response)
 
 				// Update viewport
 				m.viewport.SetContent(m.renderMessages())
@@ -236,11 +233,95 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Clear textarea
 				m.textarea.Reset()
 
+				// Mark as streaming and start streaming response
+				m.isStreaming = true
+
 				// Don't let the textarea process this Enter
 				m.viewport, vpCmd = m.viewport.Update(msg)
-				return m, vpCmd
+				return m, tea.Batch(vpCmd, m.bot.GetResponseStream(userInput))
 			}
 		}
+
+	case chatbot.StreamChunkMsg:
+		// Streaming chunk received
+		if m.isStreaming && len(m.messages) > 0 {
+			// Update the last message (bot response) with the chunk
+			lastIdx := len(m.messages) - 1
+			m.messages[lastIdx].Content = msg.Chunk
+
+			// Track output tokens
+			m.outputTokens += estimateTokens(msg.Chunk)
+
+			// Update viewport
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+
+			// Mark streaming as done
+			m.isStreaming = false
+		}
+		return m, nil
+
+	case chatbot.StreamErrorMsg:
+		// Streaming error occurred
+		if m.isStreaming && len(m.messages) > 0 {
+			lastIdx := len(m.messages) - 1
+			m.messages[lastIdx].Content = fmt.Sprintf("❌ Error: %v", msg.Err)
+			m.isStreaming = false
+
+			// Update viewport
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+		}
+		return m, nil
+
+	case chatbot.FetchAgentListMsg:
+		// User requested agent list - show loading message and start fetch
+		m.messages = append(m.messages, chatbot.Message{
+			Role:    chatbot.RoleBot,
+			Content: "⏳ Fetching agents from server...",
+		})
+
+		// Update viewport
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+
+		// Start the fetch
+		return m, m.bot.GetAgentList()
+
+	case chatbot.AgentListMsg:
+		// Agent list received successfully
+		var content strings.Builder
+		content.WriteString("📋 Available Agents:\n\n")
+		for i, agent := range msg.Agents {
+			content.WriteString(fmt.Sprintf("%d. %s\n", i+1, agent.Name))
+			content.WriteString(fmt.Sprintf("   %s\n", agent.Description))
+			if i < len(msg.Agents)-1 {
+				content.WriteString("\n")
+			}
+		}
+
+		// Replace the loading message with the actual agent list
+		if len(m.messages) > 0 {
+			lastIdx := len(m.messages) - 1
+			m.messages[lastIdx].Content = content.String()
+		}
+
+		// Update viewport
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil
+
+	case chatbot.AgentListErrorMsg:
+		// Agent list fetch failed - replace loading message with error
+		if len(m.messages) > 0 {
+			lastIdx := len(m.messages) - 1
+			m.messages[lastIdx].Content = "❌ failed to connect to server"
+		}
+
+		// Update viewport
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil
 
 	case error:
 		m.err = msg
@@ -302,9 +383,9 @@ func (m Model) renderHeader(width int) string {
 	// Only show Ctrl+N hint when in full screen mode
 	var subtitleText string
 	if m.isFullScreen() {
-		subtitleText = "Ctrl+A: extensions | Ctrl+N: sidebar | Alt+Enter: new line | Esc: quit"
+		subtitleText = "Ctrl+A: extensions | Ctrl+Y: model | Ctrl+S: system prompt | Ctrl+G: agents | Ctrl+N: sidebar | Alt+Enter: new line | Esc: quit"
 	} else {
-		subtitleText = "Ctrl+A: extensions | Alt+Enter: new line | Esc: quit"
+		subtitleText = "Ctrl+A: extensions | Ctrl+Y: model | Ctrl+S: system prompt | Ctrl+G: agents | Alt+Enter: new line | Esc: quit"
 	}
 	subtitle := subtitleStyle.Render(subtitleText)
 
@@ -422,6 +503,11 @@ func max(a, b int) int {
 // Claude's tokenizer averages ~4 characters per token
 func estimateTokens(text string) int {
 	return len(text) / 4
+}
+
+// GetBot returns the bot instance
+func (m *Model) GetBot() *chatbot.Bot {
+	return m.bot
 }
 
 func (m Model) renderSidebar() string {
