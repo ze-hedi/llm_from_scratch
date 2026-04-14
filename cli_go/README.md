@@ -7,6 +7,7 @@ A beautiful terminal-based chatbot interface built with Go, Bubble Tea, and Cobr
 - **Interactive TUI**: Beautiful terminal user interface with smooth scrolling
 - **Real-time Chat**: Instant responses with an intelligent mock chatbot
 - **Seamless Navigation**: Press Ctrl+A to switch between Chat and Extensions (state preserved!)
+- **Agent Management**: Browse and select agents with Ctrl+G, view detailed agent information and tools
 - **Smart Sidebar**: Token usage sidebar auto-shows in full screen mode (≥120 columns)
 - **Keyboard Controls**: Fully keyboard-driven interface
 - **Responsive Design**: Adapts to terminal window size
@@ -120,10 +121,45 @@ Then open your browser to `http://localhost:3000`
 4. Launch up to 10 terminals simultaneously
 5. When a terminal disconnects, it's automatically removed from the list
 
+### Agent List Browser
+
+Browse and manage AI agents directly from the chat interface by pressing **Ctrl+G**:
+
+```bash
+# In chat mode, press Ctrl+G to open agent list
+```
+
+**Features:**
+- **Browse Agents**: View all available agents from the server with descriptions
+- **Agent Details**: Select an agent to view comprehensive information in a popup
+- **Dual Forms**: Toggle between Main Agent details and Tools using F2
+- **Scrollable Content**: Navigate long agent details with up/down arrow keys
+- **Responsive UI**: Adapts to terminal size changes
+
+**Main Agent Form displays:**
+- **Soul**: Agent's core personality/purpose
+- **Agent Instructions**: Detailed instructions for the agent
+- **Agent Pattern**: The agent type/pattern being used
+- **Human in Loop**: Whether human intervention is required
+- **Max Iterations**: Maximum number of iterations allowed
+
+**Tools Form displays:**
+- **Tool List**: All available tools for the selected agent
+- **Tool Details**: Name and description for each tool
+
+**Navigation:**
+1. Press **Ctrl+G** from chat to open agent list
+2. Use **↑/↓** or **j/k** to browse agents
+3. Press **Enter** to view agent details in a green popup
+4. Press **F2** to toggle between "Main Agent" and "Tools" forms
+5. Use **↑/↓** or **j/k** to scroll through long content
+6. Press **Ctrl+G** or **Esc** to return to chat
+
 ### Keyboard Controls
 
 **Global Navigation:**
 - **Ctrl+A**: Switch between Chat and Extensions browser (state is preserved!)
+- **Ctrl+G**: Open agent list browser / Return to chat
 - **Ctrl+Y**: Open model settings / Return to chat
 - **Esc**: Return to Chat (from any extension)
 
@@ -133,6 +169,13 @@ Then open your browser to `http://localhost:3000`
 - **Ctrl+N**: Toggle sidebar (only in full screen mode, ≥120 columns)
 - **Ctrl+C** or **Esc**: Quit the application
 - **Arrow Keys**: Navigate through chat history
+
+**Agent List Browser:**
+- **↑/↓** or **j/k**: Navigate through agents
+- **Enter**: Select agent and view details
+- **Ctrl+G** or **Esc**: Return to chat
+- **F2**: Toggle between Main Agent and Tools forms (when viewing agent details)
+- **↑/↓** or **j/k** (in popup): Scroll through agent details
 
 **Settings Mode:**
 - **↑/↓** or **j/k**: Navigate models
@@ -204,6 +247,9 @@ The token usage sidebar is **intelligent and responsive**:
 │   ├── tui/               # Chat TUI implementation
 │   │   ├── model.go       # Bubble Tea model
 │   │   └── styles.go      # UI styling
+│   ├── agentlist/         # Agent list browser
+│   │   ├── model.go       # Agent browser model
+│   │   └── styles.go      # Agent browser styles
 │   ├── settings/          # Settings management
 │   │   ├── config.go      # Configuration
 │   │   ├── model.go       # Settings model
