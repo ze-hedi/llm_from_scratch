@@ -36,6 +36,8 @@ var extensionsCmd = &cobra.Command{
 				switch selectedExt.Command {
 				case "tamagotchi":
 					return tamagotchiCmd.RunE(cmd, args)
+				case "dino":
+					return dinoCmd.RunE(cmd, args)
 				default:
 					fmt.Printf("Extension command '%s' not found.\n", selectedExt.Command)
 					return nil

@@ -340,6 +340,11 @@ func (m Model) View() string {
 		return "Initializing..."
 	}
 
+	// If no messages, show centered initial view
+	if len(m.messages) == 0 {
+		return m.renderInitialView()
+	}
+
 	// Only show sidebar if in full screen mode AND user wants it visible
 	canShowSidebar := m.isFullScreen() && m.sidebarVisible
 
@@ -377,24 +382,57 @@ func (m Model) View() string {
 	return mainContent
 }
 
-func (m Model) renderHeader(width int) string {
-	title := titleStyle.Render("🤖 ChatBot TUI")
+func (m Model) renderInitialView() string {
+	// Centered title
+	titleText := titleStyle.Render("🤖 ChatBot TUI")
 
-	// Only show Ctrl+N hint when in full screen mode
-	var subtitleText string
-	if m.isFullScreen() {
-		subtitleText = "Ctrl+A: extensions | Ctrl+Y: model | Ctrl+S: system prompt | Ctrl+G: agents | Ctrl+N: sidebar | Alt+Enter: new line | Esc: quit"
-	} else {
-		subtitleText = "Ctrl+A: extensions | Ctrl+Y: model | Ctrl+S: system prompt | Ctrl+G: agents | Alt+Enter: new line | Esc: quit"
-	}
-	subtitle := subtitleStyle.Render(subtitleText)
+	// Welcome message
+	welcomeMsg := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241")).
+		Render("Start a conversation...")
+
+	// Input area
+	inputArea := m.textarea.View()
+
+	// Footer info
+	info := infoStyle.Render("Enter: Send | Alt+Enter: New Line | Esc: Quit")
+
+	// Combine title, welcome, and input
+	centeredContent := lipgloss.JoinVertical(
+		lipgloss.Center,
+		titleText,
+		"",
+		"",
+		welcomeMsg,
+		"",
+		"",
+		inputArea,
+		info,
+	)
+
+	// Place everything in the center of the screen
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		centeredContent,
+	)
+}
+
+func (m Model) renderHeader(width int) string {
+	// Center the title
+	titleText := titleStyle.Render("🤖 ChatBot TUI")
+	title := lipgloss.NewStyle().
+		Width(width).
+		Align(lipgloss.Center).
+		Render(titleText)
 
 	line := strings.Repeat("─", max(0, width-2))
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		title,
-		subtitle,
 		lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(line),
 	)
 }

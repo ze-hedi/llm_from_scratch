@@ -53,6 +53,15 @@ type AgentListErrorMsg struct {
 	Err error
 }
 
+// SetAgent message types
+type SetAgentMsg struct {
+	Response map[string]interface{}
+}
+
+type SetAgentErrorMsg struct {
+	Err error
+}
+
 type Bot struct {
 	name         string
 	random       *rand.Rand
@@ -271,5 +280,39 @@ func (b *Bot) GetAgentList() tea.Cmd {
 		}
 
 		return AgentListMsg{Agents: agents}
+	}
+}
+
+// SetAgent sets the active agent by calling the set_agent endpoint
+func (b *Bot) SetAgent(agentName string) tea.Cmd {
+	return func() tea.Msg {
+		// Build the URL for the set_agent endpoint with agent_name parameter
+		setAgentURL := strings.Replace(b.agentURL, "/agent", "/set_agent", 1)
+		setAgentURL = fmt.Sprintf("%s?agent_name=%s", setAgentURL, agentName)
+
+		// Make HTTP GET request
+		req, err := http.NewRequest("GET", setAgentURL, nil)
+		if err != nil {
+			return SetAgentErrorMsg{Err: fmt.Errorf("failed to create request: %w", err)}
+		}
+
+		resp, err := b.httpClient.Do(req)
+		if err != nil {
+			return SetAgentErrorMsg{Err: fmt.Errorf("failed to connect to server: %w", err)}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return SetAgentErrorMsg{Err: fmt.Errorf("server error (status %d): %s", resp.StatusCode, string(body))}
+		}
+
+		// Parse the JSON response
+		var response map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			return SetAgentErrorMsg{Err: fmt.Errorf("failed to parse response: %w", err)}
+		}
+
+		return SetAgentMsg{Response: response}
 	}
 }

@@ -11,7 +11,7 @@ A beautiful terminal-based chatbot interface built with Go, Bubble Tea, and Cobr
 - **Keyboard Controls**: Fully keyboard-driven interface
 - **Responsive Design**: Adapts to terminal window size
 - **Clean Architecture**: Well-organized Go project structure
-- **Extensions**: Modular extension system with built-in Tamagotchi game
+- **Extensions**: Modular extension system with built-in games (Tamagotchi & Dino Runner)
 - **Web Terminal**: Browser-based terminal with support for up to 10 simultaneous shells
 
 ## Prerequisites
@@ -20,7 +20,7 @@ A beautiful terminal-based chatbot interface built with Go, Bubble Tea, and Cobr
 - Terminal with UTF-8 support
 - Node.js and npm (for web terminal server)
 
-## Installation
+## Quick Start
 
 ```bash
 # Clone the repository
@@ -32,7 +32,25 @@ go mod download
 
 # Build the application
 go build -o chatbot-tui .
+
+# Start chatting
+./chatbot-tui chat
+
+# Or browse extensions
+./chatbot-tui extensions
 ```
+
+## Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `./chatbot-tui chat` | Start interactive chat session |
+| `./chatbot-tui extensions` | Browse and launch extensions |
+| `./chatbot-tui tamagotchi` | Play Tamagotchi virtual pet game |
+| `./chatbot-tui tamagotchi choose` | Choose a new pet |
+| `./chatbot-tui tamagotchi reset` | Reset your pet |
+| `./chatbot-tui dino` | Play Dino Runner game |
+| `./chatbot-tui dino reset` | Reset high score |
 
 ## Usage
 
@@ -60,6 +78,16 @@ go build -o chatbot-tui .
 
 # Reset your pet
 ./chatbot-tui tamagotchi reset
+```
+
+### Play Dino Runner
+
+```bash
+# Start the game
+./chatbot-tui dino
+
+# Reset your high score
+./chatbot-tui dino reset
 ```
 
 ### Web Terminal Server
@@ -124,11 +152,17 @@ Then open your browser to `http://localhost:3000`
 - **Enter**: Send command
 - **Ctrl+A** or **Esc**: Back to Chat
 
+**Dino Runner Mode:**
+- **SPACE/UP/W**: Jump over obstacles
+- **DOWN/S**: Duck under birds
+- **R/SPACE** (when game over): Restart game
+- **Q/Esc/Ctrl+A**: Back to Chat (auto-saves high score)
+
 ### Quick Navigation Workflow
 
 1. Start chatting: `./chatbot-tui chat`
 2. Press **Ctrl+A** to browse extensions while keeping your chat history
-3. Select and launch an extension (e.g., Tamagotchi)
+3. Select and launch an extension (e.g., Tamagotchi or Dino Runner)
 4. Press **Ctrl+A** to return to your chat - all messages preserved!
 5. Switch back and forth as much as you want - everything stays in memory
 
@@ -160,7 +194,8 @@ The token usage sidebar is **intelligent and responsive**:
 │   ├── chat.go            # Chat command
 │   ├── settings.go        # Settings command
 │   ├── extensions.go      # Extensions browser
-│   └── tamagotchi.go      # Tamagotchi command
+│   ├── tamagotchi.go      # Tamagotchi command
+│   └── dino.go            # Dino Runner command
 ├── internal/
 │   ├── coordinator/       # Main navigation coordinator
 │   │   └── model.go       # Manages view switching
@@ -178,13 +213,20 @@ The token usage sidebar is **intelligent and responsive**:
 │       ├── model.go       # Browser model
 │       └── styles.go      # Browser styles
 ├── extensions/            # Modular extensions
-│   └── tamagotchi/        # Tamagotchi game extension
-│       ├── pet/           # Pet logic
-│       │   └── pet.go     # Pet implementation
-│       ├── tui/           # Tamagotchi TUI
-│       │   ├── model.go   # Game model
-│       │   └── styles.go  # Game styles
-│       ├── choose.go      # Pet selection
+│   ├── tamagotchi/        # Tamagotchi game extension
+│   │   ├── pet/           # Pet logic
+│   │   │   └── pet.go     # Pet implementation
+│   │   ├── tui/           # Tamagotchi TUI
+│   │   │   ├── model.go   # Game model
+│   │   │   └── styles.go  # Game styles
+│   │   ├── choose.go      # Pet selection
+│   │   └── README.md      # Extension docs
+│   └── dino/              # Dino Runner game extension
+│       ├── game/          # Game logic
+│       │   ├── game.go    # Physics & collision
+│       │   └── storage.go # High score persistence
+│       ├── tui/           # Dino TUI
+│       │   └── model.go   # Game rendering
 │       └── README.md      # Extension docs
 ├── pkg/
 │   └── chatbot/           # Chatbot logic
@@ -228,7 +270,81 @@ The mock chatbot includes:
 - Context-aware responses
 - Question handling
 
+## Extensions
+
+The application features a modular extension system that allows you to launch mini-applications from within the chat interface.
+
+### Available Extensions
+
+#### 🐾 Tamagotchi
+A virtual pet game where you care for your digital companion!
+
+**Features:**
+- Choose from different pet types (Cat, Dog, Dragon)
+- Feed, play, and heal your pet
+- Watch stats like hunger, happiness, and health
+- Persistent pet state across sessions
+
+**Commands:**
+- `feed` - Feed your pet
+- `play` - Play with your pet
+- `heal` - Heal your pet
+- `status` - Check pet stats
+- `quit` - Exit the game
+
+#### 🦖 Dino Runner
+Chrome's classic T-Rex endless runner game, recreated for your terminal!
+
+**Features:**
+- Jump and duck mechanics with realistic physics
+- Progressive difficulty (speed increases over time)
+- Two obstacle types: Cacti and Birds
+- High score tracking with persistence
+- ASCII art rendering for compatibility
+- Smooth 30 FPS animation
+
+**Gameplay:**
+- Avoid cacti on the ground by jumping
+- Duck under flying birds
+- Score increases based on distance traveled
+- Game speed gradually increases
+- Beat your high score!
+
+**Technical Details:**
+- Gravity-based physics system
+- Real-time collision detection
+- Procedural obstacle generation
+- Persistent storage in `~/.cli_go/dino/save.json`
+
 ## Development
+
+### Adding New Extensions
+
+To create a new extension, follow this pattern:
+
+1. **Add to extensions.json:**
+```json
+{
+  "id": "myext",
+  "name": "My Extension",
+  "description": "Description of my extension",
+  "command": "myext",
+  "icon": "🎯"
+}
+```
+
+2. **Create extension structure:**
+```bash
+mkdir -p extensions/myext/{core,tui}
+```
+
+3. **Implement core logic** (`extensions/myext/core/logic.go`)
+4. **Implement TUI** (`extensions/myext/tui/model.go`) using Bubble Tea
+5. **Create Cobra command** (`cmd/myext.go`)
+6. **Hook into extensions browser** (`cmd/extensions.go`)
+7. **Integrate with coordinator** (`internal/coordinator/model.go`) for Ctrl+A switching
+
+See `extensions/dino/` for a complete example.
 
 ### Adding New Commands
 
@@ -278,6 +394,16 @@ var customStyle = lipgloss.NewStyle().
 - [ ] Export conversations
 - [ ] Typing indicators
 - [ ] Message timestamps
+
+### Extensions
+- [x] Tamagotchi virtual pet game
+- [x] Dino Runner endless runner game
+- [ ] Snake game
+- [ ] Tetris
+- [ ] Pomodoro timer
+- [ ] File browser
+- [ ] System monitor
+- [ ] Note-taking app
 
 ### Web Terminal
 - [x] Multiple terminal instances (up to 10)

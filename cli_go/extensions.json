@@ -6,6 +6,13 @@
       "description": "Virtual pet game - Care for your digital companion!",
       "command": "tamagotchi",
       "icon": "🐾"
+    },
+    {
+      "id": "dino",
+      "name": "Dino Runner",
+      "description": "Chrome's T-Rex runner game in your terminal!",
+      "command": "dino",
+      "icon": "🦖"
     }
   ]
 }
