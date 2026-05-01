@@ -55,10 +55,9 @@ var tmuxThreeCmd = &cobra.Command{
 		if result == nil {
 			return nil // user cancelled
 		}
-		dir := resolveWorkDir()
 		panes := make([]tmux.PaneSpec, result.PaneCount)
 		for i := range panes {
-			panes[i] = tmux.PaneSpec{WorkDir: dir}
+			panes[i] = tmux.PaneSpec{WorkDir: result.Paths[i]}
 		}
 		spec := layout.Custom(result.SessionName, result.Layout, panes)
 		return realizeAndAttach(spec)
