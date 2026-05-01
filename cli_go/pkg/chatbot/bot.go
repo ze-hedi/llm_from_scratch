@@ -67,8 +67,9 @@ type Bot struct {
 	random       *rand.Rand
 	SystemPrompt string
 	httpClient   *http.Client
-	agentURL     string
-	useAgent     bool // Toggle between pattern-matching and real agent
+	runtimeURL   string // base URL of the otto_code runtime server
+	agentId      string // ID of the currently active agent (set after /runtime/run)
+	useAgent     bool   // Toggle between pattern-matching and real agent
 }
 
 func NewBot() *Bot {
@@ -77,19 +78,17 @@ func NewBot() *Bot {
 		random:       rand.New(rand.NewSource(time.Now().UnixNano())),
 		SystemPrompt: "You are a helpful AI assistant. Be friendly and conversational.",
 		httpClient: &http.Client{
-			Timeout: 5 * time.Minute, // Long timeout for streaming
+			Timeout: 5 * time.Minute,
 		},
-		agentURL: "http://localhost:8001/agent",
-		useAgent: true, // Set to false to use pattern-matching bot
+		runtimeURL: "http://localhost:5000",
+		agentId:    "",
+		useAgent:   true,
 	}
 }
 
 func (b *Bot) GetResponse(input string) string {
-	// Note: SystemPrompt is available and would be used when integrating with a real LLM API
-	// For this pattern-matching bot, the SystemPrompt is stored but not actively used in responses
 	input = strings.ToLower(strings.TrimSpace(input))
 
-	// Pattern matching for intelligent responses
 	switch {
 	case strings.Contains(input, "hello") || strings.Contains(input, "hi"):
 		return b.randomChoice([]string{
@@ -126,9 +125,9 @@ func (b *Bot) GetResponse(input string) string {
 
 	case strings.Contains(input, "joke"):
 		return b.randomChoice([]string{
-			"Why don't programmers like nature? It has too many bugs! 🐛",
-			"Why do programmers prefer dark mode? Because light attracts bugs! 💡",
-			"What's a programmer's favorite hangout place? Foo Bar! 🍺",
+			"Why don't programmers like nature? It has too many bugs!",
+			"Why do programmers prefer dark mode? Because light attracts bugs!",
+			"What's a programmer's favorite hangout place? Foo Bar!",
 		})
 
 	case strings.Contains(input, "thank"):
@@ -170,95 +169,168 @@ func (b *Bot) generateThought(input string) string {
 	return b.randomChoice(thoughts)
 }
 
-// GetResponseStream returns a tea.Cmd that streams responses from the agent
+// initAgent calls POST /runtime/run to create a new agent session.
+// It stores the returned agent ID in b.agentId for subsequent chat calls.
+func (b *Bot) initAgent(agentId, model string) error {
+	payload := map[string]interface{}{
+		"agent": map[string]interface{}{
+			"_id":         agentId,
+			"name":        "TUI Assistant",
+			"model":       model,
+			"description": "TUI Chat assistant",
+		},
+	}
+	if b.SystemPrompt != "" {
+		payload["files"] = []map[string]string{
+			{"type": "soul", "content": b.SystemPrompt},
+		}
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal run request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", b.runtimeURL+"/runtime/run", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create run request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to connect to runtime: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("runtime error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		AgentId string `json:"agentId"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("failed to parse run response: %w", err)
+	}
+
+	b.agentId = result.AgentId
+	return nil
+}
+
+// GetResponseStream returns a tea.Cmd that streams responses from the otto_code runtime.
+// It initializes an agent session if one doesn't exist, then streams the chat response via SSE.
 func (b *Bot) GetResponseStream(input string) tea.Cmd {
-	// If agent is disabled, fall back to pattern matching
 	if !b.useAgent {
 		return func() tea.Msg {
-			response := b.GetResponse(input)
-			return StreamChunkMsg{Chunk: response}
+			return StreamChunkMsg{Chunk: b.GetResponse(input)}
 		}
 	}
 
 	return func() tea.Msg {
-		// Prepare request body
-		reqBody := map[string]interface{}{
-			"message":       input,
-			"system_prompt": b.SystemPrompt,
-		}
-		jsonData, err := json.Marshal(reqBody)
-		if err != nil {
-			return StreamErrorMsg{Err: fmt.Errorf("failed to marshal request: %w", err)}
+		// Initialize agent on first use
+		if b.agentId == "" {
+			if err := b.initAgent("tui-chat-default", "claude-sonnet-4-6"); err != nil {
+				return StreamErrorMsg{Err: fmt.Errorf("failed to initialize agent: %w", err)}
+			}
 		}
 
-		// Make HTTP POST request
-		req, err := http.NewRequest("POST", b.agentURL, bytes.NewBuffer(jsonData))
+		// POST /runtime/chat/:id
+		chatURL := fmt.Sprintf("%s/runtime/chat/%s", b.runtimeURL, b.agentId)
+		jsonData, err := json.Marshal(map[string]string{"message": input})
 		if err != nil {
-			return StreamErrorMsg{Err: fmt.Errorf("failed to create request: %w", err)}
+			return StreamErrorMsg{Err: fmt.Errorf("failed to marshal chat request: %w", err)}
+		}
+
+		req, err := http.NewRequest("POST", chatURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return StreamErrorMsg{Err: fmt.Errorf("failed to create chat request: %w", err)}
 		}
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
 
 		resp, err := b.httpClient.Do(req)
 		if err != nil {
-			return StreamErrorMsg{Err: fmt.Errorf("failed to connect to agent: %w", err)}
+			return StreamErrorMsg{Err: fmt.Errorf("failed to connect to runtime: %w", err)}
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
-			return StreamErrorMsg{Err: fmt.Errorf("agent error (status %d): %s", resp.StatusCode, string(body))}
+			return StreamErrorMsg{Err: fmt.Errorf("runtime error (status %d): %s", resp.StatusCode, string(body))}
 		}
 
-		// Stream the response
-		return b.streamResponse(resp.Body)
+		return b.parseSSEResponse(resp.Body)
 	}
 }
 
-// streamResponse reads the streaming response and returns chunks
-func (b *Bot) streamResponse(body io.Reader) tea.Msg {
-	var fullResponse strings.Builder
+// parseSSEResponse reads the SSE stream from the otto_code runtime and accumulates
+// all delta text into a single StreamChunkMsg.
+//
+// SSE line format:  data: {"type":"delta","text":"..."}\n\n
+// Possible types:   delta | tool_start | tool_end | done | error
+func (b *Bot) parseSSEResponse(body io.Reader) tea.Msg {
+	var fullText strings.Builder
 	scanner := bufio.NewScanner(body)
 
 	for scanner.Scan() {
-		chunk := scanner.Text()
-		if chunk != "" {
-			fullResponse.WriteString(chunk)
-			fullResponse.WriteString("\n")
+		line := scanner.Text()
+
+		// SSE lines are either "data: <json>" or blank separators
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		raw := strings.TrimPrefix(line, "data: ")
+
+		var event struct {
+			Type    string `json:"type"`
+			Text    string `json:"text"`
+			Message string `json:"message"` // used by "error" events
+		}
+		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			continue // skip malformed lines
+		}
+
+		switch event.Type {
+		case "delta":
+			fullText.WriteString(event.Text)
+		case "done":
+			// Stream complete — nothing left to read
+		case "error":
+			return StreamErrorMsg{Err: fmt.Errorf("agent error: %s", event.Message)}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return StreamErrorMsg{Err: fmt.Errorf("error reading stream: %w", err)}
+		return StreamErrorMsg{Err: fmt.Errorf("error reading SSE stream: %w", err)}
 	}
 
-	// For now, return the full response at once
-	// TODO: Make this truly streaming by sending chunks incrementally
-	return StreamChunkMsg{Chunk: fullResponse.String()}
+	return StreamChunkMsg{Chunk: fullText.String()}
 }
 
-// SetAgentURL updates the agent endpoint URL
-func (b *Bot) SetAgentURL(url string) {
-	b.agentURL = url
+// SetRuntimeURL updates the base URL of the otto_code runtime server.
+// Changing the URL resets the active agent so the next message re-initializes.
+func (b *Bot) SetRuntimeURL(url string) {
+	b.runtimeURL = url
+	b.agentId = ""
 }
 
-// SetUseAgent enables or disables the agent (falls back to pattern matching if disabled)
+// SetUseAgent enables or disables the agent (falls back to pattern matching if disabled).
 func (b *Bot) SetUseAgent(use bool) {
 	b.useAgent = use
 }
 
-// IsUsingAgent returns whether the bot is using the real agent
+// IsUsingAgent returns whether the bot is using the real agent.
 func (b *Bot) IsUsingAgent() bool {
 	return b.useAgent
 }
 
-// GetAgentList fetches the list of available agents from the server
+// GetAgentList fetches the list of active agent IDs from the runtime status endpoint.
 func (b *Bot) GetAgentList() tea.Cmd {
 	return func() tea.Msg {
-		// Build the URL for the getagent endpoint
-		getAgentURL := strings.Replace(b.agentURL, "/agent", "/getagent", 1)
-
-		// Make HTTP GET request
-		req, err := http.NewRequest("GET", getAgentURL, nil)
+		req, err := http.NewRequest("GET", b.runtimeURL+"/runtime/status", nil)
 		if err != nil {
 			return AgentListErrorMsg{Err: fmt.Errorf("failed to connect to server")}
 		}
@@ -273,46 +345,37 @@ func (b *Bot) GetAgentList() tea.Cmd {
 			return AgentListErrorMsg{Err: fmt.Errorf("failed to connect to server")}
 		}
 
-		// Parse the response
-		var agents []AgentInfo
-		if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
-			return AgentListErrorMsg{Err: fmt.Errorf("failed to connect to server")}
+		var status struct {
+			ActiveAgents   []string `json:"activeAgents"`
+			CurrentAgentId string   `json:"currentAgentId"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+			return AgentListErrorMsg{Err: fmt.Errorf("failed to parse server response")}
+		}
+
+		agents := make([]AgentInfo, 0, len(status.ActiveAgents))
+		for _, id := range status.ActiveAgents {
+			desc := ""
+			if id == status.CurrentAgentId {
+				desc = "(current)"
+			}
+			agents = append(agents, AgentInfo{Name: id, Description: desc})
 		}
 
 		return AgentListMsg{Agents: agents}
 	}
 }
 
-// SetAgent sets the active agent by calling the set_agent endpoint
+// SetAgent switches the active agent by calling POST /runtime/run with the given agent ID.
+// The model defaults to claude-sonnet-4-6; pass a non-empty model string to override.
 func (b *Bot) SetAgent(agentName string) tea.Cmd {
 	return func() tea.Msg {
-		// Build the URL for the set_agent endpoint with agent_name parameter
-		setAgentURL := strings.Replace(b.agentURL, "/agent", "/set_agent", 1)
-		setAgentURL = fmt.Sprintf("%s?agent_name=%s", setAgentURL, agentName)
-
-		// Make HTTP GET request
-		req, err := http.NewRequest("GET", setAgentURL, nil)
-		if err != nil {
-			return SetAgentErrorMsg{Err: fmt.Errorf("failed to create request: %w", err)}
+		if err := b.initAgent(agentName, "claude-sonnet-4-6"); err != nil {
+			return SetAgentErrorMsg{Err: err}
 		}
-
-		resp, err := b.httpClient.Do(req)
-		if err != nil {
-			return SetAgentErrorMsg{Err: fmt.Errorf("failed to connect to server: %w", err)}
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return SetAgentErrorMsg{Err: fmt.Errorf("server error (status %d): %s", resp.StatusCode, string(body))}
-		}
-
-		// Parse the JSON response
-		var response map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			return SetAgentErrorMsg{Err: fmt.Errorf("failed to parse response: %w", err)}
-		}
-
-		return SetAgentMsg{Response: response}
+		return SetAgentMsg{Response: map[string]interface{}{
+			"success": true,
+			"agentId": b.agentId,
+		}}
 	}
 }
