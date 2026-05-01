@@ -84,6 +84,9 @@ func (s *SessionSpec) realizeWindow(idx int, win WindowSpec) error {
 	}
 
 	// Split and populate the remaining panes.
+	// We apply select-layout after every split so tmux redistributes space
+	// before the next split — without this, panes shrink until tmux refuses
+	// to split further ("no space for new pane").
 	for pi, pane := range win.Panes[1:] {
 		windowTarget := fmt.Sprintf("%s:%d", s.Name, idx)
 		splitArgs := []string{"split-window", "-t", windowTarget}
@@ -94,18 +97,16 @@ func (s *SessionSpec) realizeWindow(idx int, win WindowSpec) error {
 			return err
 		}
 
+		if _, err := Run("select-layout", "-t", windowTarget, string(win.Layout)); err != nil {
+			return err
+		}
+
 		if pane.Command != "" {
-			// pi+1 because index 0 is the first pane we already handled.
 			paneTarget := fmt.Sprintf("%s:%d.%d", s.Name, idx, pi+1)
 			if _, err := Run("send-keys", "-t", paneTarget, pane.Command, "Enter"); err != nil {
 				return err
 			}
 		}
-	}
-
-	// Apply the layout once all panes exist.
-	if _, err := Run("select-layout", "-t", fmt.Sprintf("%s:%d", s.Name, idx), string(win.Layout)); err != nil {
-		return err
 	}
 
 	return nil

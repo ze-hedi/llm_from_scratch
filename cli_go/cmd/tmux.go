@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/yourusername/chatbot-tui/internal/tmuxui"
 	"github.com/yourusername/chatbot-tui/layout"
 	"github.com/yourusername/chatbot-tui/pkg/tmux"
 )
@@ -45,9 +46,21 @@ func init() {
 
 var tmuxThreeCmd = &cobra.Command{
 	Use:   "three",
-	Short: "One window, 3 equal horizontal panes",
+	Short: "One window, N panes — interactive setup",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		spec := layout.ThreePanes(flagSession)
+		result, err := tmuxui.Run(flagSession)
+		if err != nil {
+			return err
+		}
+		if result == nil {
+			return nil // user cancelled
+		}
+		dir := resolveWorkDir()
+		panes := make([]tmux.PaneSpec, result.PaneCount)
+		for i := range panes {
+			panes[i] = tmux.PaneSpec{WorkDir: dir}
+		}
+		spec := layout.Custom(result.SessionName, result.Layout, panes)
 		return realizeAndAttach(spec)
 	},
 }
