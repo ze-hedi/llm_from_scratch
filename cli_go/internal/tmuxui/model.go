@@ -2,6 +2,7 @@ package tmuxui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -11,10 +12,11 @@ import (
 )
 
 const (
-	stepPaneCount = iota
-	stepLayout
-	stepSession
-	stepConfirm
+	stepPaneCount = iota // 0
+	stepLayout           // 1
+	stepPaths            // 2
+	stepSession          // 3
+	stepConfirm          // 4
 )
 
 var (
@@ -36,18 +38,21 @@ type Result struct {
 	PaneCount   int
 	Layout      tmux.Layout
 	SessionName string
+	Paths       []string // one entry per pane
 }
 
 // Model is the Bubble Tea model for the tmux session setup wizard.
 type Model struct {
-	step         int
-	paneCount    int
-	layoutIdx    int
-	sessionInput textinput.Model
-	width        int
-	height       int
-	result       *Result
-	quitting     bool
+	step          int
+	paneCount     int
+	layoutIdx     int
+	pathInputs    []textinput.Model
+	activePathIdx int
+	sessionInput  textinput.Model
+	width         int
+	height        int
+	result        *Result
+	quitting      bool
 }
 
 func NewModel(defaultSession string) Model {
@@ -85,37 +90,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "shift+tab":
-			if m.step > 0 {
-				m.step--
-				if m.step == stepSession {
-					return m, m.sessionInput.Focus()
-				}
-				m.sessionInput.Blur()
+			if m.step == 0 {
+				return m, nil
 			}
-			return m, nil
+			m = blurCurrentStep(m)
+			m.step--
+			return focusCurrentStep(m)
 
 		case "tab", "enter":
 			if m.step == stepConfirm {
-				name := m.sessionInput.Value()
-				if name == "" {
-					name = "dev"
-				}
-				m.result = &Result{
-					PaneCount:   m.paneCount,
-					Layout:      availableLayouts[m.layoutIdx],
-					SessionName: name,
-				}
+				m.result = m.buildResult()
 				return m, tea.Quit
 			}
+			m = blurCurrentStep(m)
 			m.step++
-			if m.step == stepSession {
-				return m, m.sessionInput.Focus()
-			}
-			m.sessionInput.Blur()
-			return m, nil
+			return focusCurrentStep(m)
 		}
 
-		// Per-step key handling (only if enter/tab not consumed above).
+		// Per-step key handling (enter/tab already consumed above).
 		switch m.step {
 		case stepPaneCount:
 			switch msg.String() {
@@ -128,6 +120,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.paneCount++
 				}
 			}
+
 		case stepLayout:
 			switch msg.String() {
 			case "left", "h":
@@ -135,6 +128,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "right", "l":
 				m.layoutIdx = (m.layoutIdx + 1) % len(availableLayouts)
 			}
+
+		case stepPaths:
+			switch msg.String() {
+			case "up":
+				if m.activePathIdx > 0 {
+					m.pathInputs[m.activePathIdx].Blur()
+					m.activePathIdx--
+					cmd := m.pathInputs[m.activePathIdx].Focus()
+					return m, cmd
+				}
+			case "down":
+				if m.activePathIdx < m.paneCount-1 {
+					m.pathInputs[m.activePathIdx].Blur()
+					m.activePathIdx++
+					cmd := m.pathInputs[m.activePathIdx].Focus()
+					return m, cmd
+				}
+			default:
+				var cmd tea.Cmd
+				m.pathInputs[m.activePathIdx], cmd = m.pathInputs[m.activePathIdx].Update(msg)
+				return m, cmd
+			}
+
 		case stepSession:
 			var cmd tea.Cmd
 			m.sessionInput, cmd = m.sessionInput.Update(msg)
@@ -145,16 +161,99 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// blurCurrentStep blurs whichever inputs are live for the current step.
+func blurCurrentStep(m Model) Model {
+	switch m.step {
+	case stepPaths:
+		for i := range m.pathInputs {
+			m.pathInputs[i].Blur()
+		}
+	case stepSession:
+		m.sessionInput.Blur()
+	}
+	return m
+}
+
+// focusCurrentStep initialises and focuses inputs for the current step,
+// returning the updated model and the focus tea.Cmd.
+func focusCurrentStep(m Model) (tea.Model, tea.Cmd) {
+	switch m.step {
+	case stepPaths:
+		if len(m.pathInputs) != m.paneCount {
+			m = initPaths(m)
+		}
+		cmd := m.pathInputs[m.activePathIdx].Focus()
+		return m, cmd
+	case stepSession:
+		cmd := m.sessionInput.Focus()
+		return m, cmd
+	}
+	return m, nil
+}
+
+// initPaths (re)creates the path textinputs, preserving existing values.
+func initPaths(m Model) Model {
+	cwd, _ := os.Getwd()
+	existing := m.pathInputs
+	m.pathInputs = make([]textinput.Model, m.paneCount)
+	for i := range m.pathInputs {
+		ti := textinput.New()
+		ti.Placeholder = cwd
+		ti.CharLimit = 256
+		ti.Prompt = ""
+		ti.Width = 40
+		if i < len(existing) {
+			ti.SetValue(existing[i].Value())
+		} else {
+			ti.SetValue(cwd)
+		}
+		m.pathInputs[i] = ti
+	}
+	if m.activePathIdx >= m.paneCount {
+		m.activePathIdx = 0
+	}
+	return m
+}
+
+// buildResult packages the confirmed state into a Result.
+func (m Model) buildResult() *Result {
+	name := m.sessionInput.Value()
+	if name == "" {
+		name = "dev"
+	}
+
+	paths := make([]string, m.paneCount)
+	for i := range paths {
+		paths[i] = m.pathInputs[i].Value()
+	}
+
+	return &Result{
+		PaneCount:   m.paneCount,
+		Layout:      availableLayouts[m.layoutIdx],
+		SessionName: name,
+		Paths:       paths,
+	}
+}
+
+// ── Views ──────────────────────────────────────────────────────────────────
+
 func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
+	if m.step == stepPaths {
+		return m.viewPathsFrame()
+	}
+	return m.viewMainForm()
+}
 
+func (m Model) viewMainForm() string {
 	title := titleStyle.Render("New tmux session")
 
 	rows := strings.Join([]string{
 		m.row(stepPaneCount, "Panes", m.viewPaneCount()),
 		m.row(stepLayout, "Layout", m.viewLayout()),
+		m.row(stepPaths, "Dirs", m.viewDirsSummary()),
 		m.row(stepSession, "Session", m.viewSession()),
 		m.row(stepConfirm, "Launch", m.viewConfirm()),
 	}, "\n")
@@ -176,7 +275,36 @@ func (m Model) View() string {
 	return lipgloss.NewStyle().Padding(1, 3).Render(content)
 }
 
-// row renders one labelled field with active/inactive styling.
+func (m Model) viewPathsFrame() string {
+	title := pathsFrameTitleStyle.Render("Working directories")
+
+	var rows []string
+	for i, ti := range m.pathInputs {
+		var cursor, labelRendered string
+		if i == m.activePathIdx {
+			cursor = "▶ "
+			labelRendered = paneRowActiveStyle.Render(fmt.Sprintf("Pane %-2d", i+1))
+		} else {
+			cursor = "  "
+			labelRendered = paneRowMutedStyle.Render(fmt.Sprintf("Pane %-2d", i+1))
+		}
+		rows = append(rows, cursor+labelRendered+"   "+ti.View())
+	}
+
+	box := pathBoxStyle.Render(strings.Join(rows, "\n"))
+	hint := hintStyle.Render("↑/↓: switch pane   Tab: next   Shift+Tab: back   Esc: cancel")
+
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		title,
+		"",
+		box,
+		hint,
+	)
+
+	return lipgloss.NewStyle().Padding(1, 3).Render(content)
+}
+
+// row renders one form row with active/inactive label styling.
 func (m Model) row(step int, label, value string) string {
 	if m.step == step {
 		return activeLabelStyle.Render(label) + "  " + value
@@ -203,6 +331,13 @@ func (m Model) viewLayout() string {
 	return mutedStyle.Render(name)
 }
 
+func (m Model) viewDirsSummary() string {
+	if len(m.pathInputs) == 0 || m.step <= stepPaths {
+		return mutedStyle.Render("—")
+	}
+	return mutedStyle.Render(fmt.Sprintf("%d paths set", m.paneCount))
+}
+
 func (m Model) viewSession() string {
 	if m.step == stepSession {
 		return m.sessionInput.View()
@@ -221,6 +356,8 @@ func (m Model) viewConfirm() string {
 	return confirmMutedStyle.Render("Press Enter to launch")
 }
 
+// ── Public API ─────────────────────────────────────────────────────────────
+
 // Result returns the confirmed result, or nil if cancelled.
 func (m Model) Result() *Result {
 	return m.result
@@ -233,7 +370,7 @@ func Run(defaultSession string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return final.(Model).Result(), nil
+	return final.(Model).result, nil
 }
 
 // ── ASCII preview renderer ─────────────────────────────────────────────────
@@ -282,7 +419,6 @@ func renderTiled(n int) string {
 	w := 11
 
 	var b strings.Builder
-
 	topRow := "┌" + strings.Repeat(strings.Repeat("─", w)+"┬", cols-1) + strings.Repeat("─", w) + "┐\n"
 	midRow := "│" + strings.Repeat(strings.Repeat(" ", w)+"│", cols) + "\n"
 	divRow := "├" + strings.Repeat(strings.Repeat("─", w)+"┼", cols-1) + strings.Repeat("─", w) + "┤\n"

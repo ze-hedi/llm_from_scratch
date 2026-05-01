@@ -53,4 +53,24 @@ var (
 			Foreground(lipgloss.Color("241")).
 			Italic(true).
 			Padding(1, 0, 0, 0)
+
+	// Paths frame styles.
+
+	pathsFrameTitleStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("86")).
+				Padding(0, 0, 1, 0)
+
+	pathBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("34")).
+			Padding(1, 2).
+			Width(58)
+
+	paneRowActiveStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("86")).
+				Bold(true)
+
+	paneRowMutedStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("241"))
 )
