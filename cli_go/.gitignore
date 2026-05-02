@@ -1,5 +1,6 @@
 # Binaries
 chatbot-tui
+cli
 *.exe
 *.exe~
 *.dll
