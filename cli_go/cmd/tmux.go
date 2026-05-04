@@ -25,6 +25,7 @@ var (
 	flagSession string
 	flagWorkDir string
 	flagPanes   int
+	flagConfig  string
 )
 
 func init() {
@@ -40,6 +41,7 @@ func init() {
 	tmuxCmd.AddCommand(tmuxKillCmd)
 
 	tmuxCustomCmd.Flags().IntVarP(&flagPanes, "panes", "p", 3, "number of panes to open")
+	tmuxThreeCmd.Flags().StringVar(&flagConfig, "config", "", "path to a JSON config file (skips interactive setup)")
 }
 
 // ── three ──────────────────────────────────────────────────────────────────
@@ -48,6 +50,15 @@ var tmuxThreeCmd = &cobra.Command{
 	Use:   "three",
 	Short: "One window, N panes — interactive setup",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if flagConfig != "" {
+			cfg, err := tmux.LoadConfig(flagConfig)
+			if err != nil {
+				return err
+			}
+			spec := cfg.ToSessionSpec()
+			return realizeAndAttach(spec)
+		}
+
 		result, err := tmuxui.Run(flagSession)
 		if err != nil {
 			return err
