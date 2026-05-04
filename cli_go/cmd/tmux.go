@@ -154,5 +154,7 @@ func realizeAndAttach(spec tmux.SessionSpec) error {
 	if err := spec.Realize(); err != nil {
 		return err
 	}
-	return tmux.Attach(spec.Name)
+	tmux.Attach(spec.Name)
+	tmux.Run("kill-session", "-t", spec.Name)
+	return nil
 }
