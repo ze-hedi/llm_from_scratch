@@ -3,10 +3,12 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/yourusername/chatbot-tui/internal/commands"
 	"github.com/yourusername/chatbot-tui/internal/settings"
@@ -29,6 +31,8 @@ type Model struct {
 	currentModel   *settings.Model
 	maxTokens      int
 	isStreaming    bool // Track if we're currently receiving a stream
+	mdRenderer     *glamour.TermRenderer
+	lastKeyTime    time.Time // Track last keystroke for paste detection
 }
 
 func NewModel() Model {
@@ -38,11 +42,9 @@ func NewModel() Model {
 	ta.Prompt = "┃ "
 	ta.CharLimit = 2000
 	ta.SetWidth(80)
-	ta.SetHeight(1) // Start with one line
+	ta.SetHeight(1)
 	ta.ShowLineNumbers = false
-	ta.KeyMap.InsertNewline.SetEnabled(true) // Allow multi-line input
-	// Dynamically expand as user types, max 10 lines
-	ta.MaxHeight = 10
+	ta.KeyMap.InsertNewline.SetEnabled(true)
 
 	// Apply uniform grey background to entire textarea
 	ta.FocusedStyle.Base = lipgloss.NewStyle().Background(lipgloss.Color("235"))
@@ -59,6 +61,11 @@ func NewModel() Model {
 		maxTokens = currentModel.MaxTokens
 	}
 
+	mdRenderer, _ := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(80),
+	)
+
 	return Model{
 		textarea:       ta,
 		viewport:       vp,
@@ -71,6 +78,7 @@ func NewModel() Model {
 		sidebarVisible: true,
 		currentModel:   currentModel,
 		maxTokens:      maxTokens,
+		mdRenderer:     mdRenderer,
 	}
 }
 
@@ -119,16 +127,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mainWidth := msg.Width - sidebarWidth
 
 		if !m.ready {
-			m.viewport = viewport.New(mainWidth, msg.Height-10)
+			m.viewport = viewport.New(mainWidth, msg.Height-8)
 			m.viewport.YPosition = 0
 			m.ready = true
 		} else {
 			m.viewport.Width = mainWidth
-			m.viewport.Height = msg.Height - 10
 		}
 		m.textarea.SetWidth(mainWidth - 4)
+		m.resizeTextarea()
+
+		// Recreate markdown renderer with updated width
+		mdWidth := mainWidth - 8 // account for padding
+		if mdWidth < 20 {
+			mdWidth = 20
+		}
+		r, err := glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(mdWidth),
+		)
+		if err == nil {
+			m.mdRenderer = r
+		}
 
 	case tea.KeyMsg:
+		// Track timing for paste detection (all keys except Enter)
+		if msg.Type != tea.KeyEnter {
+			m.lastKeyTime = time.Now()
+		}
+
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
@@ -159,87 +185,76 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyEnter:
-			// Plain Enter (without Alt) sends the message
-			// Alt+Enter is handled by the textarea for new lines
-			if !msg.Alt {
-				userInput := strings.TrimSpace(m.textarea.Value())
-				if userInput == "" {
-					// Let textarea handle it if empty
-					break
+			if msg.Alt {
+				// Alt+Enter always inserts a newline
+				break
+			}
+
+			// Paste detection: if Enter arrives within 50ms of last keystroke,
+			// it's part of a paste — insert newline instead of sending
+			if time.Since(m.lastKeyTime) < 50*time.Millisecond {
+				break
+			}
+
+			userInput := strings.TrimSpace(m.textarea.Value())
+			if userInput == "" {
+				break
+			}
+
+			// Check if it's a command
+			cmdResult := m.cmdHandler.Process(userInput)
+
+			if cmdResult.IsCommand {
+				if cmdResult.ErrorMessage != "" {
+					m.messages = append(m.messages, chatbot.Message{
+						Role:    chatbot.RoleUser,
+						Content: userInput,
+					})
+					m.messages = append(m.messages, chatbot.Message{
+						Role:    chatbot.RoleBot,
+						Content: "❌ " + cmdResult.ErrorMessage,
+					})
+				} else if cmdResult.Message != "" {
+					m.messages = append(m.messages, chatbot.Message{
+						Role:    chatbot.RoleUser,
+						Content: userInput,
+					})
+					m.messages = append(m.messages, chatbot.Message{
+						Role:    chatbot.RoleBot,
+						Content: cmdResult.Message,
+					})
 				}
 
-				// Check if it's a command
-				cmdResult := m.cmdHandler.Process(userInput)
-
-				if cmdResult.IsCommand {
-					// It's a command - handle it
-					if cmdResult.ErrorMessage != "" {
-						// Command error
-						m.messages = append(m.messages, chatbot.Message{
-							Role:    chatbot.RoleUser,
-							Content: userInput,
-						})
-						m.messages = append(m.messages, chatbot.Message{
-							Role:    chatbot.RoleBot,
-							Content: "❌ " + cmdResult.ErrorMessage,
-						})
-					} else if cmdResult.Message != "" {
-						// Command success with message
-						m.messages = append(m.messages, chatbot.Message{
-							Role:    chatbot.RoleUser,
-							Content: userInput,
-						})
-						m.messages = append(m.messages, chatbot.Message{
-							Role:    chatbot.RoleBot,
-							Content: cmdResult.Message,
-						})
-					}
-
-					// Update viewport
-					m.viewport.SetContent(m.renderMessages())
-					m.viewport.GotoBottom()
-
-					// Clear textarea
-					m.textarea.Reset()
-
-					// Check if we should quit
-					if cmdResult.ShouldQuit {
-						return m, tea.Quit
-					}
-
-					return m, nil
-				}
-
-				// Not a command - normal chat message
-				// Add user message
-				m.messages = append(m.messages, chatbot.Message{
-					Role:    chatbot.RoleUser,
-					Content: userInput,
-				})
-
-				// Track input tokens
-				m.inputTokens += estimateTokens(userInput)
-
-				// Add empty bot message that will be filled by streaming
-				m.messages = append(m.messages, chatbot.Message{
-					Role:    chatbot.RoleBot,
-					Content: "⏳ Thinking...",
-				})
-
-				// Update viewport
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
-
-				// Clear textarea
 				m.textarea.Reset()
 
-				// Mark as streaming and start streaming response
-				m.isStreaming = true
+				if cmdResult.ShouldQuit {
+					return m, tea.Quit
+				}
 
-				// Don't let the textarea process this Enter
-				m.viewport, vpCmd = m.viewport.Update(msg)
-				return m, tea.Batch(vpCmd, m.bot.GetResponseStream(userInput))
+				return m, nil
 			}
+
+			// Normal chat message
+			m.messages = append(m.messages, chatbot.Message{
+				Role:    chatbot.RoleUser,
+				Content: userInput,
+			})
+			m.inputTokens += estimateTokens(userInput)
+
+			m.messages = append(m.messages, chatbot.Message{
+				Role:    chatbot.RoleBot,
+				Content: "⏳ Thinking...",
+			})
+
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+			m.textarea.Reset()
+
+			m.isStreaming = true
+			m.viewport, vpCmd = m.viewport.Update(msg)
+			return m, tea.Batch(vpCmd, m.bot.GetResponseStream(userInput))
 		}
 
 	case chatbot.StreamChunkMsg:
@@ -331,6 +346,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Let textarea and viewport handle all other messages
 	m.textarea, tiCmd = m.textarea.Update(msg)
 	m.viewport, vpCmd = m.viewport.Update(msg)
+
+	// Resize textarea to fit content
+	m.resizeTextarea()
 
 	return m, tea.Batch(tiCmd, vpCmd)
 }
@@ -453,13 +471,17 @@ func (m Model) renderMessages() string {
 		}
 
 		if msg.Role == chatbot.RoleUser {
-			// Wrap the message content with width constraint
 			wrappedContent := wrapText("You: "+msg.Content, maxWidth)
 			sb.WriteString(userMessageStyle.Render(wrappedContent))
 		} else {
-			// Wrap the message content with width constraint
-			wrappedContent := wrapText("Bot: "+msg.Content, maxWidth)
-			sb.WriteString(botMessageStyle.Render(wrappedContent))
+			rendered := msg.Content
+			if m.mdRenderer != nil {
+				if md, err := m.mdRenderer.Render(msg.Content); err == nil {
+					rendered = strings.TrimSpace(md)
+				}
+			}
+			label := botMessageStyle.Render("Bot:")
+			sb.WriteString(label + "\n" + lipgloss.NewStyle().PaddingLeft(2).Render(rendered))
 		}
 	}
 
@@ -535,6 +557,55 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// textareaHeight computes how tall the textarea should be based on content,
+// clamped between 1 and 10 lines.
+func (m *Model) textareaHeight() int {
+	value := m.textarea.Value()
+	if value == "" {
+		return 1
+	}
+
+	// The textarea internally wraps using its width minus the prompt width.
+	// Prompt "┃ " is 2 runes wide.
+	promptWidth := 2
+	wrapWidth := m.textarea.Width() - promptWidth
+	if wrapWidth <= 0 {
+		wrapWidth = 1
+	}
+
+	total := 0
+	for _, line := range strings.Split(value, "\n") {
+		runeLen := len([]rune(line))
+		if runeLen == 0 {
+			total++
+		} else {
+			total += (runeLen + wrapWidth - 1) / wrapWidth
+		}
+	}
+
+	if total < 1 {
+		total = 1
+	}
+	if total > 10 {
+		total = 10
+	}
+	return total
+}
+
+// resizeTextarea adjusts textarea height to fit content and shrinks viewport accordingly.
+func (m *Model) resizeTextarea() {
+	h := m.textareaHeight()
+	m.textarea.SetHeight(h)
+
+	// header(~3) + footer(info ~2) + textarea(h) + padding(~3)
+	overhead := 3 + 2 + h + 3
+	vpHeight := m.height - overhead
+	if vpHeight < 4 {
+		vpHeight = 4
+	}
+	m.viewport.Height = vpHeight
 }
 
 // estimateTokens provides a rough estimate of tokens in text

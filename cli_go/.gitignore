@@ -1,6 +1,8 @@
 # Binaries
 chatbot-tui
 cli
+otto-chat
+otto-tmux
 *.exe
 *.exe~
 *.dll
