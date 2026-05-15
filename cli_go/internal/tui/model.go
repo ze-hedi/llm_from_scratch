@@ -289,55 +289,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case chatbot.FetchAgentListMsg:
-		// User requested agent list - show loading message and start fetch
-		m.messages = append(m.messages, chatbot.Message{
-			Role:    chatbot.RoleBot,
-			Content: "⏳ Fetching agents from server...",
-		})
-
-		// Update viewport
-		m.viewport.SetContent(m.renderMessages())
-		m.viewport.GotoBottom()
-
-		// Start the fetch
-		return m, m.bot.GetAgentList()
-
-	case chatbot.AgentListMsg:
-		// Agent list received successfully
-		var content strings.Builder
-		content.WriteString("📋 Available Agents:\n\n")
-		for i, agent := range msg.Agents {
-			content.WriteString(fmt.Sprintf("%d. %s\n", i+1, agent.Name))
-			content.WriteString(fmt.Sprintf("   %s\n", agent.Description))
-			if i < len(msg.Agents)-1 {
-				content.WriteString("\n")
-			}
-		}
-
-		// Replace the loading message with the actual agent list
-		if len(m.messages) > 0 {
-			lastIdx := len(m.messages) - 1
-			m.messages[lastIdx].Content = content.String()
-		}
-
-		// Update viewport
-		m.viewport.SetContent(m.renderMessages())
-		m.viewport.GotoBottom()
-		return m, nil
-
-	case chatbot.AgentListErrorMsg:
-		// Agent list fetch failed - replace loading message with error
-		if len(m.messages) > 0 {
-			lastIdx := len(m.messages) - 1
-			m.messages[lastIdx].Content = "❌ failed to connect to server"
-		}
-
-		// Update viewport
-		m.viewport.SetContent(m.renderMessages())
-		m.viewport.GotoBottom()
-		return m, nil
-
 	case error:
 		m.err = msg
 		return m, nil

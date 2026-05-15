@@ -105,7 +105,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.currentView == ChatView {
 				// Switch to agent list view
 				m.currentView = AgentListView
-				m.agentListModel = agentlist.NewModel(m.chatModel.GetBot())
+				m.agentListModel = agentlist.NewModel()
 				return m, m.agentListModel.Init()
 			} else if m.currentView == AgentListView {
 				// Switch back to chat

@@ -1,13 +1,8 @@
 package chatbot
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"math/rand"
-	"net/http"
 	"strings"
 	"time"
 
@@ -37,39 +32,10 @@ type StreamErrorMsg struct {
 	Err error
 }
 
-// Agent info message types
-type AgentInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-}
-
-type FetchAgentListMsg struct{} // Trigger to fetch agent list
-
-type AgentListMsg struct {
-	Agents []AgentInfo
-}
-
-type AgentListErrorMsg struct {
-	Err error
-}
-
-// SetAgent message types
-type SetAgentMsg struct {
-	Response map[string]interface{}
-}
-
-type SetAgentErrorMsg struct {
-	Err error
-}
-
 type Bot struct {
 	name         string
 	random       *rand.Rand
 	SystemPrompt string
-	httpClient   *http.Client
-	runtimeURL   string // base URL of the otto_code runtime server
-	agentId      string // ID of the currently active agent (set after /runtime/run)
-	useAgent     bool   // Toggle between pattern-matching and real agent
 }
 
 func NewBot() *Bot {
@@ -77,12 +43,6 @@ func NewBot() *Bot {
 		name:         "ChatBot",
 		random:       rand.New(rand.NewSource(time.Now().UnixNano())),
 		SystemPrompt: "You are a helpful AI assistant. Be friendly and conversational.",
-		httpClient: &http.Client{
-			Timeout: 5 * time.Minute,
-		},
-		runtimeURL: "http://localhost:5000",
-		agentId:    "",
-		useAgent:   true,
 	}
 }
 
@@ -169,213 +129,9 @@ func (b *Bot) generateThought(input string) string {
 	return b.randomChoice(thoughts)
 }
 
-// initAgent calls POST /runtime/run to create a new agent session.
-// It stores the returned agent ID in b.agentId for subsequent chat calls.
-func (b *Bot) initAgent(agentId, model string) error {
-	payload := map[string]interface{}{
-		"agent": map[string]interface{}{
-			"_id":         agentId,
-			"name":        "TUI Assistant",
-			"model":       model,
-			"description": "TUI Chat assistant",
-		},
-	}
-	if b.SystemPrompt != "" {
-		payload["files"] = []map[string]string{
-			{"type": "soul", "content": b.SystemPrompt},
-		}
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal run request: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", b.runtimeURL+"/runtime/run", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create run request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := b.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to connect to runtime: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("runtime error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var result struct {
-		AgentId string `json:"agentId"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("failed to parse run response: %w", err)
-	}
-
-	b.agentId = result.AgentId
-	return nil
-}
-
-// GetResponseStream returns a tea.Cmd that streams responses from the otto_code runtime.
-// It initializes an agent session if one doesn't exist, then streams the chat response via SSE.
+// GetResponseStream returns a tea.Cmd that uses pattern-matching to generate a response.
 func (b *Bot) GetResponseStream(input string) tea.Cmd {
-	if !b.useAgent {
-		return func() tea.Msg {
-			return StreamChunkMsg{Chunk: b.GetResponse(input)}
-		}
-	}
-
 	return func() tea.Msg {
-		// Initialize agent on first use
-		if b.agentId == "" {
-			if err := b.initAgent("tui-chat-default", "claude-sonnet-4-6"); err != nil {
-				return StreamErrorMsg{Err: fmt.Errorf("failed to initialize agent: %w", err)}
-			}
-		}
-
-		// POST /runtime/chat/:id
-		chatURL := fmt.Sprintf("%s/runtime/chat/%s", b.runtimeURL, b.agentId)
-		jsonData, err := json.Marshal(map[string]string{"message": input})
-		if err != nil {
-			return StreamErrorMsg{Err: fmt.Errorf("failed to marshal chat request: %w", err)}
-		}
-
-		req, err := http.NewRequest("POST", chatURL, bytes.NewBuffer(jsonData))
-		if err != nil {
-			return StreamErrorMsg{Err: fmt.Errorf("failed to create chat request: %w", err)}
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "text/event-stream")
-
-		resp, err := b.httpClient.Do(req)
-		if err != nil {
-			return StreamErrorMsg{Err: fmt.Errorf("failed to connect to runtime: %w", err)}
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return StreamErrorMsg{Err: fmt.Errorf("runtime error (status %d): %s", resp.StatusCode, string(body))}
-		}
-
-		return b.parseSSEResponse(resp.Body)
-	}
-}
-
-// parseSSEResponse reads the SSE stream from the otto_code runtime and accumulates
-// all delta text into a single StreamChunkMsg.
-//
-// SSE line format:  data: {"type":"delta","text":"..."}\n\n
-// Possible types:   delta | tool_start | tool_end | done | error
-func (b *Bot) parseSSEResponse(body io.Reader) tea.Msg {
-	var fullText strings.Builder
-	scanner := bufio.NewScanner(body)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// SSE lines are either "data: <json>" or blank separators
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-
-		raw := strings.TrimPrefix(line, "data: ")
-
-		var event struct {
-			Type    string `json:"type"`
-			Text    string `json:"text"`
-			Message string `json:"message"` // used by "error" events
-		}
-		if err := json.Unmarshal([]byte(raw), &event); err != nil {
-			continue // skip malformed lines
-		}
-
-		switch event.Type {
-		case "delta":
-			fullText.WriteString(event.Text)
-		case "done":
-			// Stream complete — nothing left to read
-		case "error":
-			return StreamErrorMsg{Err: fmt.Errorf("agent error: %s", event.Message)}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return StreamErrorMsg{Err: fmt.Errorf("error reading SSE stream: %w", err)}
-	}
-
-	return StreamChunkMsg{Chunk: fullText.String()}
-}
-
-// SetRuntimeURL updates the base URL of the otto_code runtime server.
-// Changing the URL resets the active agent so the next message re-initializes.
-func (b *Bot) SetRuntimeURL(url string) {
-	b.runtimeURL = url
-	b.agentId = ""
-}
-
-// SetUseAgent enables or disables the agent (falls back to pattern matching if disabled).
-func (b *Bot) SetUseAgent(use bool) {
-	b.useAgent = use
-}
-
-// IsUsingAgent returns whether the bot is using the real agent.
-func (b *Bot) IsUsingAgent() bool {
-	return b.useAgent
-}
-
-// GetAgentList fetches the list of active agent IDs from the runtime status endpoint.
-func (b *Bot) GetAgentList() tea.Cmd {
-	return func() tea.Msg {
-		req, err := http.NewRequest("GET", b.runtimeURL+"/runtime/status", nil)
-		if err != nil {
-			return AgentListErrorMsg{Err: fmt.Errorf("failed to connect to server")}
-		}
-
-		resp, err := b.httpClient.Do(req)
-		if err != nil {
-			return AgentListErrorMsg{Err: fmt.Errorf("failed to connect to server")}
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return AgentListErrorMsg{Err: fmt.Errorf("failed to connect to server")}
-		}
-
-		var status struct {
-			ActiveAgents   []string `json:"activeAgents"`
-			CurrentAgentId string   `json:"currentAgentId"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-			return AgentListErrorMsg{Err: fmt.Errorf("failed to parse server response")}
-		}
-
-		agents := make([]AgentInfo, 0, len(status.ActiveAgents))
-		for _, id := range status.ActiveAgents {
-			desc := ""
-			if id == status.CurrentAgentId {
-				desc = "(current)"
-			}
-			agents = append(agents, AgentInfo{Name: id, Description: desc})
-		}
-
-		return AgentListMsg{Agents: agents}
-	}
-}
-
-// SetAgent switches the active agent by calling POST /runtime/run with the given agent ID.
-// The model defaults to claude-sonnet-4-6; pass a non-empty model string to override.
-func (b *Bot) SetAgent(agentName string) tea.Cmd {
-	return func() tea.Msg {
-		if err := b.initAgent(agentName, "claude-sonnet-4-6"); err != nil {
-			return SetAgentErrorMsg{Err: err}
-		}
-		return SetAgentMsg{Response: map[string]interface{}{
-			"success": true,
-			"agentId": b.agentId,
-		}}
+		return StreamChunkMsg{Chunk: b.GetResponse(input)}
 	}
 }

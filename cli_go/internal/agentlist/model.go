@@ -3,21 +3,23 @@ package agentlist
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/yourusername/chatbot-tui/pkg/chatbot"
 )
 
+type AgentInfo struct {
+	Name        string
+	Description string
+}
+
 type Model struct {
-	agents        []chatbot.AgentInfo
+	agents        []AgentInfo
 	selectedIndex int
 	width         int
 	height        int
 	err           error
 	loading       bool
-	bot           *chatbot.Bot
 	showPopup     bool
 	popupMessage  string
 	agentResponse map[string]interface{}
@@ -28,25 +30,16 @@ type Model struct {
 // HidePopupMsg is sent after a delay to hide the popup
 type HidePopupMsg struct{}
 
-func NewModel(bot *chatbot.Bot) Model {
+func NewModel() Model {
 	return Model{
-		agents:        []chatbot.AgentInfo{},
+		agents:        []AgentInfo{},
 		selectedIndex: 0,
-		loading:       true,
-		bot:           bot,
+		loading:       false,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	// Fetch agent list on initialization
-	return m.bot.GetAgentList()
-}
-
-// hidePopupAfter returns a command that sends HidePopupMsg after a delay
-func hidePopupAfter(d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(t time.Time) tea.Msg {
-		return HidePopupMsg{}
-	})
+	return nil
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -55,17 +48,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-	case chatbot.AgentListMsg:
-		// Successfully received agent list
-		m.agents = msg.Agents
-		m.loading = false
-		m.err = nil
-
-	case chatbot.AgentListErrorMsg:
-		// Error fetching agent list
-		m.err = msg.Err
-		m.loading = false
-
 	case HidePopupMsg:
 		// Hide the popup after the timer expires
 		m.showPopup = false
@@ -73,15 +55,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agentResponse = nil
 		m.popupScroll = 0
 		m.activeForm = "main"
-
-	case chatbot.SetAgentMsg:
-		// Successfully received response from set_agent endpoint
-		m.agentResponse = msg.Response
-
-	case chatbot.SetAgentErrorMsg:
-		// Error calling set_agent endpoint
-		m.popupMessage = fmt.Sprintf("Error: %v", msg.Err)
-		return m, hidePopupAfter(3 * time.Second)
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -108,16 +81,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "enter":
-			// Call set_agent endpoint when Enter is pressed on an agent (only if popup not shown)
+			// Select agent (only if popup not shown)
 			if !m.showPopup && !m.loading && len(m.agents) > 0 {
 				agentName := m.agents[m.selectedIndex].Name
 				m.showPopup = true
-				m.popupMessage = fmt.Sprintf("loading %s ...", agentName)
+				m.popupMessage = fmt.Sprintf("Selected: %s", agentName)
 				m.agentResponse = nil
-				m.popupScroll = 0     // Reset scroll when showing new agent
-				m.activeForm = "main" // Start with main form
-				// Call the set_agent endpoint
-				return m, m.bot.SetAgent(agentName)
+				m.popupScroll = 0
+				m.activeForm = "main"
 			}
 
 		case "f2":
