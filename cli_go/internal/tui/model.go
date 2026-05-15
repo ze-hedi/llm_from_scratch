@@ -13,13 +13,11 @@ import (
 	"github.com/yourusername/chatbot-tui/internal/commands"
 	"github.com/yourusername/chatbot-tui/internal/settings"
 	"github.com/yourusername/chatbot-tui/pkg/chatbot"
-	"github.com/yourusername/chatbot-tui/pkg/runtime"
 )
 
 type Model struct {
 	viewport       viewport.Model
 	textarea       textarea.Model
-	messages       []chatbot.Message
 	bot            *chatbot.Bot
 	cmdHandler     *commands.Handler
 	width          int
@@ -31,15 +29,12 @@ type Model struct {
 	sidebarVisible bool
 	currentModel   *settings.Model
 	maxTokens      int
-	isStreaming     bool
-	wasThinking    bool
-	thinkingText   string
 	agentName      string
 	mdRenderer     *glamour.TermRenderer
-	lastKeyTime    time.Time // Track last keystroke for paste detection
+	lastKeyTime    time.Time
 }
 
-func NewModel(client *runtime.Client) Model {
+func NewModel(bot *chatbot.Bot) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Type your message..."
 	ta.Focus()
@@ -50,7 +45,6 @@ func NewModel(client *runtime.Client) Model {
 	ta.ShowLineNumbers = false
 	ta.KeyMap.InsertNewline.SetEnabled(true)
 
-	// Apply uniform grey background to entire textarea
 	ta.FocusedStyle.Base = lipgloss.NewStyle().Background(lipgloss.Color("235"))
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(lipgloss.Color("235"))
 	ta.BlurredStyle.Base = lipgloss.NewStyle().Background(lipgloss.Color("235"))
@@ -58,9 +52,8 @@ func NewModel(client *runtime.Client) Model {
 	vp := viewport.New(80, 20)
 	vp.SetContent("")
 
-	// Load selected model
 	currentModel, _ := settings.LoadSelectedModel()
-	maxTokens := 200000 // default
+	maxTokens := 200000
 	if currentModel != nil {
 		maxTokens = currentModel.MaxTokens
 	}
@@ -70,22 +63,22 @@ func NewModel(client *runtime.Client) Model {
 		glamour.WithWordWrap(80),
 	)
 
-	bot := chatbot.NewBot(client)
 	cmdHandler := commands.NewHandler()
 
-	// Register runtime commands
 	cmdHandler.RegisterCommand("status", func(args []string) commands.CommandResult {
-		if bot.Client() == nil {
-			return commands.CommandResult{IsCommand: true, Message: "Not connected to server"}
+		s := bot.Sessions.ActiveSession()
+		if s == nil {
+			return commands.CommandResult{IsCommand: true, Message: "No active session"}
 		}
-		info := fmt.Sprintf("Agent: %s\nSession: %s", bot.AgentID(), bot.SessionID())
+		info := fmt.Sprintf("Agent: %s\nSession: %s", s.AgentID, s.SessionID)
 		return commands.CommandResult{IsCommand: true, Message: info}
 	})
 	cmdHandler.RegisterCommand("abort", func(args []string) commands.CommandResult {
-		if bot.Client() == nil || bot.SessionID() == "" {
+		s := bot.Sessions.ActiveSession()
+		if s == nil || bot.Client() == nil {
 			return commands.CommandResult{IsCommand: true, ErrorMessage: "No active session"}
 		}
-		if err := bot.Client().AbortAgent(bot.SessionID()); err != nil {
+		if err := bot.Client().AbortAgent(s.SessionID); err != nil {
 			return commands.CommandResult{IsCommand: true, ErrorMessage: err.Error()}
 		}
 		return commands.CommandResult{IsCommand: true, Message: "Session aborted"}
@@ -94,7 +87,6 @@ func NewModel(client *runtime.Client) Model {
 	return Model{
 		textarea:       ta,
 		viewport:       vp,
-		messages:       []chatbot.Message{},
 		bot:            bot,
 		cmdHandler:     cmdHandler,
 		ready:          false,
@@ -111,11 +103,9 @@ func (m Model) Init() tea.Cmd {
 	return textarea.Blink
 }
 
-// ReloadModelSettings reloads the current model settings from config
-// This is useful when the user changes the model in settings
 func (m *Model) ReloadModelSettings() {
 	currentModel, _ := settings.LoadSelectedModel()
-	maxTokens := 200000 // default
+	maxTokens := 200000
 	if currentModel != nil {
 		maxTokens = currentModel.MaxTokens
 	}
@@ -123,10 +113,30 @@ func (m *Model) ReloadModelSettings() {
 	m.maxTokens = maxTokens
 }
 
-// isFullScreen determines if terminal is in full screen mode
-// We consider full screen when width >= 120 columns (enough for sidebar + content)
 func (m Model) isFullScreen() bool {
 	return m.width >= 120
+}
+
+func (m *Model) SetAgentName(name string) {
+	m.agentName = name
+}
+
+func (m *Model) SetActiveSession(sessionID string) {
+	m.bot.Sessions.SetActive(sessionID)
+	s := m.bot.Sessions.ActiveSession()
+	if s != nil {
+		m.agentName = s.AgentName
+	}
+	m.viewport.SetContent(m.renderMessages())
+	m.viewport.GotoBottom()
+}
+
+func (m Model) activeMessages() []chatbot.Message {
+	s := m.bot.Sessions.ActiveSession()
+	if s == nil {
+		return nil
+	}
+	return s.Messages
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -140,11 +150,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		// Auto-hide sidebar if not in full screen mode
-		// Only show sidebar when terminal is wide enough (full screen)
 		canShowSidebar := m.isFullScreen()
-
-		// Account for sidebar width (30 chars + 4 for borders/padding)
 		sidebarWidth := 0
 		if m.sidebarVisible && canShowSidebar {
 			sidebarWidth = 34
@@ -161,8 +167,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea.SetWidth(mainWidth - 4)
 		m.resizeTextarea()
 
-		// Recreate markdown renderer with updated width
-		mdWidth := mainWidth - 8 // account for padding
+		mdWidth := mainWidth - 8
 		if mdWidth < 20 {
 			mdWidth = 20
 		}
@@ -175,7 +180,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
-		// Track timing for paste detection (all keys except Enter)
 		if msg.Type != tea.KeyEnter {
 			m.lastKeyTime = time.Now()
 		}
@@ -185,38 +189,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyCtrlN:
-			// Only allow toggling sidebar in full screen mode
 			if !m.isFullScreen() {
-				// Ignore Ctrl+N when not in full screen
 				return m, nil
 			}
-
-			// Toggle sidebar visibility
 			m.sidebarVisible = !m.sidebarVisible
-
-			// Recalculate layout with new sidebar state
 			sidebarWidth := 0
 			if m.sidebarVisible {
 				sidebarWidth = 34
 			}
 			mainWidth := m.width - sidebarWidth
-
 			m.viewport.Width = mainWidth
 			m.textarea.SetWidth(mainWidth - 4)
-
-			// Re-render messages with new width
 			m.viewport.SetContent(m.renderMessages())
-
 			return m, nil
 
 		case tea.KeyEnter:
 			if msg.Alt {
-				// Alt+Enter always inserts a newline
 				break
 			}
-
-			// Paste detection: if Enter arrives within 50ms of last keystroke,
-			// it's part of a paste — insert newline instead of sending
 			if time.Since(m.lastKeyTime) < 50*time.Millisecond {
 				break
 			}
@@ -226,155 +216,74 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 
-			// Check if it's a command
 			cmdResult := m.cmdHandler.Process(userInput)
-
 			if cmdResult.IsCommand {
-				if cmdResult.ErrorMessage != "" {
-					m.messages = append(m.messages, chatbot.Message{
-						Role:    chatbot.RoleUser,
-						Content: userInput,
-					})
-					m.messages = append(m.messages, chatbot.Message{
-						Role:    chatbot.RoleBot,
-						Content: "❌ " + cmdResult.ErrorMessage,
-					})
-				} else if cmdResult.Message != "" {
-					m.messages = append(m.messages, chatbot.Message{
-						Role:    chatbot.RoleUser,
-						Content: userInput,
-					})
-					m.messages = append(m.messages, chatbot.Message{
-						Role:    chatbot.RoleBot,
-						Content: cmdResult.Message,
-					})
+				s := m.bot.Sessions.ActiveSession()
+				if s != nil {
+					if cmdResult.ErrorMessage != "" {
+						s.AddUserMessage(userInput)
+						s.Messages = append(s.Messages, chatbot.Message{Role: chatbot.RoleBot, Content: "❌ " + cmdResult.ErrorMessage})
+					} else if cmdResult.Message != "" {
+						s.AddUserMessage(userInput)
+						s.Messages = append(s.Messages, chatbot.Message{Role: chatbot.RoleBot, Content: cmdResult.Message})
+					}
 				}
-
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
 				m.textarea.Reset()
-
 				if cmdResult.ShouldQuit {
 					return m, tea.Quit
 				}
-
 				return m, nil
 			}
 
 			// Normal chat message
-			m.messages = append(m.messages, chatbot.Message{
-				Role:    chatbot.RoleUser,
-				Content: userInput,
-			})
+			s := m.bot.Sessions.ActiveSession()
+			if s == nil {
+				break
+			}
+			s.AddUserMessage(userInput)
 			m.inputTokens += estimateTokens(userInput)
-
-			m.messages = append(m.messages, chatbot.Message{
-				Role:    chatbot.RoleBot,
-				Content: "⏳ Thinking...",
-			})
+			s.StartStreaming(nil) // adds "Thinking..." placeholder
 
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
 			m.textarea.Reset()
 
-			m.isStreaming = true
-			m.viewport, vpCmd = m.viewport.Update(msg)
-			return m, tea.Batch(vpCmd, m.bot.GetResponseStream(userInput))
+			return m, m.bot.StartStream(s.SessionID, userInput)
 		}
 
-	case chatbot.StreamChunkMsg:
-		if m.isStreaming && len(m.messages) > 0 {
-			m.closeThinkingBlock()
-			lastIdx := len(m.messages) - 1
-			if m.messages[lastIdx].Content == "⏳ Thinking..." {
-				m.messages[lastIdx].Content = msg.Chunk
-			} else {
-				m.messages[lastIdx].Content += msg.Chunk
-			}
-			m.outputTokens += estimateTokens(msg.Chunk)
-			m.viewport.SetContent(m.renderMessages())
-			m.viewport.GotoBottom()
-		}
-		return m, m.bot.ContinueStream()
-
-	case chatbot.StreamThinkingMsg:
-		if m.isStreaming && len(m.messages) > 0 {
-			lastIdx := len(m.messages) - 1
-			if m.messages[lastIdx].Content == "⏳ Thinking..." {
-				m.messages[lastIdx].Content = ""
-			}
-			if !m.wasThinking {
-				// Starting a new thinking block — append marker to existing content
-				m.wasThinking = true
-				m.thinkingText = ""
-			}
-			m.thinkingText += msg.Text
-			// Rebuild: keep everything before this thinking block, then the open block
-			prefix := m.messages[lastIdx].Content
-			// Remove old open block if present
-			oldOpen := "{{THINKING}}" + m.thinkingText[:len(m.thinkingText)-len(msg.Text)]
-			if strings.HasSuffix(prefix, oldOpen) {
-				prefix = prefix[:len(prefix)-len(oldOpen)]
-			}
-			m.messages[lastIdx].Content = prefix + "{{THINKING}}" + m.thinkingText
-			m.viewport.SetContent(m.renderMessages())
-			m.viewport.GotoBottom()
-		}
-		return m, m.bot.ContinueStream()
-
-	case chatbot.StreamToolStartMsg:
-		if m.isStreaming && len(m.messages) > 0 {
-			lastIdx := len(m.messages) - 1
-			if m.messages[lastIdx].Content == "⏳ Thinking..." {
-				m.messages[lastIdx].Content = ""
-			}
-			m.closeThinkingBlock()
-			args := msg.Args
-			if args == "" {
-				args = "{}"
-			}
-			m.messages[lastIdx].Content += fmt.Sprintf("\n\n> 🔧 **%s**\n```json\n%s\n```\n", msg.Name, args)
-			m.viewport.SetContent(m.renderMessages())
-			m.viewport.GotoBottom()
-		}
-		return m, m.bot.ContinueStream()
-
-	case chatbot.StreamToolEndMsg:
-		if m.isStreaming && len(m.messages) > 0 {
-			lastIdx := len(m.messages) - 1
-			result := msg.Result
-			if len(result) > 500 {
-				result = result[:500] + "..."
-			}
-			status := "✅"
-			if msg.IsError {
-				status = "❌"
-			}
-			m.messages[lastIdx].Content += fmt.Sprintf("> %s **%s** result:\n```\n%s\n```\n\n", status, msg.Name, result)
-			m.viewport.SetContent(m.renderMessages())
-			m.viewport.GotoBottom()
-		}
-		return m, m.bot.ContinueStream()
-
-	case chatbot.StreamDoneMsg:
-		m.isStreaming = false
-		m.wasThinking = false
-		m.thinkingText = ""
+	// Session-tagged stream events — these are routed here by coordinator
+	// only for the active session's viewport update
+	case chatbot.SessionStreamChunkMsg:
+		m.outputTokens += estimateTokens(msg.Chunk)
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
 		return m, nil
 
-	case chatbot.StreamErrorMsg:
-		if len(m.messages) > 0 {
-			lastIdx := len(m.messages) - 1
-			m.messages[lastIdx].Content = fmt.Sprintf("Error: %v", msg.Err)
-		}
-		m.isStreaming = false
+	case chatbot.SessionStreamThinkingMsg:
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
 		return m, nil
 
-	case chatbot.AgentInitializedMsg:
+	case chatbot.SessionStreamToolStartMsg:
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil
+
+	case chatbot.SessionStreamToolEndMsg:
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil
+
+	case chatbot.SessionStreamDoneMsg:
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil
+
+	case chatbot.SessionStreamErrorMsg:
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
 		return m, nil
 
 	case error:
@@ -382,11 +291,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Let textarea and viewport handle all other messages
 	m.textarea, tiCmd = m.textarea.Update(msg)
 	m.viewport, vpCmd = m.viewport.Update(msg)
-
-	// Resize textarea to fit content
 	m.resizeTextarea()
 
 	return m, tea.Batch(tiCmd, vpCmd)
@@ -397,18 +303,15 @@ func (m Model) View() string {
 		return "Initializing..."
 	}
 
-	// If no messages, show centered initial view
-	if len(m.messages) == 0 {
+	messages := m.activeMessages()
+	if len(messages) == 0 {
 		return m.renderInitialView()
 	}
 
-	// Only show sidebar if in full screen mode AND user wants it visible
 	canShowSidebar := m.isFullScreen() && m.sidebarVisible
-
-	// Calculate widths
 	sidebarWidth := 0
 	if canShowSidebar {
-		sidebarWidth = 34 // 30 + 4 for borders/padding
+		sidebarWidth = 34
 	}
 	mainWidth := m.width - sidebarWidth
 
@@ -416,7 +319,6 @@ func (m Model) View() string {
 	content := m.viewport.View()
 	footer := m.renderFooter()
 
-	// Main content area (left side) with fixed width
 	mainContent := lipgloss.NewStyle().
 		Width(mainWidth).
 		Render(lipgloss.JoinVertical(
@@ -426,85 +328,49 @@ func (m Model) View() string {
 			footer,
 		))
 
-	// If sidebar is visible AND in full screen, join it with main content
 	if canShowSidebar {
 		sidebar := m.renderSidebar()
-		return lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			mainContent,
-			sidebar,
-		)
+		return lipgloss.JoinHorizontal(lipgloss.Top, mainContent, sidebar)
 	}
 
 	return mainContent
 }
 
 func (m Model) renderInitialView() string {
-	// Centered title
 	titleText := titleStyle.Render("🤖 " + m.displayTitle())
-
-	// Welcome message
 	welcomeMsg := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
 		Render("Start a conversation...")
-
-	// Input area
 	inputArea := m.textarea.View()
-
-	// Footer info
 	info := infoStyle.Render("Enter: Send | Alt+Enter: New Line | Esc: Quit")
 
-	// Combine title, welcome, and input
 	centeredContent := lipgloss.JoinVertical(
-		lipgloss.Center,
-		titleText,
-		"",
-		"",
-		welcomeMsg,
-		"",
-		"",
-		inputArea,
-		info,
+		lipgloss.Center, titleText, "", "", welcomeMsg, "", "", inputArea, info,
 	)
-
-	// Place everything in the center of the screen
-	return lipgloss.Place(
-		m.width,
-		m.height,
-		lipgloss.Center,
-		lipgloss.Center,
-		centeredContent,
-	)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, centeredContent)
 }
 
 func (m Model) renderHeader(width int) string {
-	// Center the title
 	titleText := titleStyle.Render("🤖 " + m.displayTitle())
-	title := lipgloss.NewStyle().
-		Width(width).
-		Align(lipgloss.Center).
-		Render(titleText)
-
+	title := lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(titleText)
 	line := strings.Repeat("─", max(0, width-2))
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(line),
-	)
+	return lipgloss.JoinVertical(lipgloss.Left, title, lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(line))
 }
 
 func (m Model) renderMessages() string {
-	var sb strings.Builder
+	messages := m.activeMessages()
+	if messages == nil {
+		return ""
+	}
 
-	// Calculate available width for messages (account for sidebar and padding)
+	var sb strings.Builder
 	sidebarWidth := 0
 	if m.sidebarVisible {
-		sidebarWidth = 34 // 30 + 4 for borders/padding
+		sidebarWidth = 34
 	}
-	maxWidth := m.width - sidebarWidth - 6 // Additional padding for safety
+	maxWidth := m.width - sidebarWidth - 6
 
-	for i, msg := range m.messages {
+	for i, msg := range messages {
 		if i > 0 {
 			sb.WriteString("\n\n")
 		}
@@ -522,8 +388,6 @@ func (m Model) renderMessages() string {
 				if thinkIdx < 0 {
 					break
 				}
-
-				// Render any text before this thinking block
 				before := rest[:thinkIdx]
 				if before != "" {
 					if m.mdRenderer != nil {
@@ -536,22 +400,18 @@ func (m Model) renderMessages() string {
 						rendered += before
 					}
 				}
-
 				rest = rest[thinkIdx+len("{{THINKING}}"):]
-
 				endIdx := strings.Index(rest, "{{/THINKING}}")
 				if endIdx >= 0 {
 					rendered += m.renderThinkingBlock(rest[:endIdx]) + "\n"
 					rest = rest[endIdx+len("{{/THINKING}}"):]
 				} else {
-					// Still open — thinking in progress
 					rendered += m.renderThinkingBlock(rest)
 					rest = ""
 					break
 				}
 			}
 
-			// Render remaining text after all thinking blocks
 			if rest != "" {
 				if m.mdRenderer != nil {
 					if md, err := m.mdRenderer.Render(rest); err == nil {
@@ -572,27 +432,20 @@ func (m Model) renderMessages() string {
 	return sb.String()
 }
 
-// wrapText wraps text to fit within the specified width
 func wrapText(text string, width int) string {
 	if width <= 0 {
 		return text
 	}
-
 	var result strings.Builder
 	var currentLine strings.Builder
 	words := strings.Fields(text)
-
 	for i, word := range words {
-		// Check if adding this word would exceed the width
 		if currentLine.Len()+len(word)+1 > width {
-			// Write current line and start a new one
 			if currentLine.Len() > 0 {
 				result.WriteString(currentLine.String())
 				result.WriteString("\n")
 				currentLine.Reset()
 			}
-
-			// If a single word is longer than width, break it up
 			if len(word) > width {
 				for len(word) > width {
 					result.WriteString(word[:width])
@@ -606,51 +459,28 @@ func wrapText(text string, width int) string {
 				currentLine.WriteString(word)
 			}
 		} else {
-			// Add space before word (except for first word)
 			if currentLine.Len() > 0 {
 				currentLine.WriteString(" ")
 			}
 			currentLine.WriteString(word)
 		}
-
-		// Add the last line
 		if i == len(words)-1 && currentLine.Len() > 0 {
 			result.WriteString(currentLine.String())
 		}
 	}
-
 	return result.String()
 }
 
 func (m Model) renderFooter() string {
+	msgCount := 0
+	if msgs := m.activeMessages(); msgs != nil {
+		msgCount = len(msgs)
+	}
 	info := infoStyle.Render(
 		"Enter: Send | Alt+Enter: New Line | /exit: Quit | Esc: Quit | Messages: " +
-			lipgloss.NewStyle().Bold(true).Render(string(rune(len(m.messages)))),
+			lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("%d", msgCount)),
 	)
-
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		"",
-		m.textarea.View(),
-		info,
-	)
-}
-
-// closeThinkingBlock closes an open thinking block in the last message.
-func (m *Model) closeThinkingBlock() {
-	if !m.wasThinking {
-		return
-	}
-	m.wasThinking = false
-	if len(m.messages) > 0 {
-		lastIdx := len(m.messages) - 1
-		// Replace the open "{{THINKING}}...text" with closed "{{THINKING}}...{{/THINKING}}"
-		open := "{{THINKING}}" + m.thinkingText
-		if strings.HasSuffix(m.messages[lastIdx].Content, open) {
-			m.messages[lastIdx].Content = m.messages[lastIdx].Content[:len(m.messages[lastIdx].Content)-len(open)] + "{{THINKING}}" + m.thinkingText + "{{/THINKING}}"
-		}
-	}
-	m.thinkingText = ""
+	return lipgloss.JoinVertical(lipgloss.Left, "", m.textarea.View(), info)
 }
 
 func (m Model) renderThinkingBlock(text string) string {
@@ -658,23 +488,9 @@ func (m Model) renderThinkingBlock(text string) string {
 	if width < 30 {
 		width = 30
 	}
-
-	bar := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("62")).
-		Render(strings.Repeat("─", width))
-
-	label := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("62")).
-		Bold(true).
-		Render("💭 Thinking")
-
-	body := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("241")).
-		Italic(true).
-		PaddingLeft(1).
-		Width(width).
-		Render(text)
-
+	bar := lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Render(strings.Repeat("─", width))
+	label := lipgloss.NewStyle().Foreground(lipgloss.Color("62")).Bold(true).Render("💭 Thinking")
+	body := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true).PaddingLeft(1).Width(width).Render(text)
 	return bar + "\n" + label + "\n" + body + "\n" + bar
 }
 
@@ -685,11 +501,6 @@ func max(a, b int) int {
 	return b
 }
 
-// SetAgentName sets the agent name displayed in the header.
-func (m *Model) SetAgentName(name string) {
-	m.agentName = name
-}
-
 func (m Model) displayTitle() string {
 	if m.agentName != "" {
 		return m.agentName
@@ -697,22 +508,16 @@ func (m Model) displayTitle() string {
 	return "ChatBot TUI"
 }
 
-// textareaHeight computes how tall the textarea should be based on content,
-// clamped between 1 and 10 lines.
 func (m *Model) textareaHeight() int {
 	value := m.textarea.Value()
 	if value == "" {
 		return 1
 	}
-
-	// The textarea internally wraps using its width minus the prompt width.
-	// Prompt "┃ " is 2 runes wide.
 	promptWidth := 2
 	wrapWidth := m.textarea.Width() - promptWidth
 	if wrapWidth <= 0 {
 		wrapWidth = 1
 	}
-
 	total := 0
 	for _, line := range strings.Split(value, "\n") {
 		runeLen := len([]rune(line))
@@ -722,7 +527,6 @@ func (m *Model) textareaHeight() int {
 			total += (runeLen + wrapWidth - 1) / wrapWidth
 		}
 	}
-
 	if total < 1 {
 		total = 1
 	}
@@ -732,12 +536,9 @@ func (m *Model) textareaHeight() int {
 	return total
 }
 
-// resizeTextarea adjusts textarea height to fit content and shrinks viewport accordingly.
 func (m *Model) resizeTextarea() {
 	h := m.textareaHeight()
 	m.textarea.SetHeight(h)
-
-	// header(~3) + footer(info ~2) + textarea(h) + padding(~3)
 	overhead := 3 + 2 + h + 3
 	vpHeight := m.height - overhead
 	if vpHeight < 4 {
@@ -746,13 +547,10 @@ func (m *Model) resizeTextarea() {
 	m.viewport.Height = vpHeight
 }
 
-// estimateTokens provides a rough estimate of tokens in text
-// Claude's tokenizer averages ~4 characters per token
 func estimateTokens(text string) int {
 	return len(text) / 4
 }
 
-// GetBot returns the bot instance
 func (m *Model) GetBot() *chatbot.Bot {
 	return m.bot
 }
@@ -765,14 +563,12 @@ func (m Model) renderSidebar() string {
 	title := sidebarTitleStyle.Render("📊 Token Usage")
 	divider := strings.Repeat("─", 26)
 
-	// Get model name
-	modelName := "Claude Sonnet 4.5" // default
+	modelName := "Claude Sonnet 4.5"
 	if m.currentModel != nil {
 		modelName = m.currentModel.Name
 	}
 
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
+	content := lipgloss.JoinVertical(lipgloss.Left,
 		title,
 		lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(divider),
 		"",
@@ -797,8 +593,5 @@ func (m Model) renderSidebar() string {
 		lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(fmt.Sprintf("  %s", modelName)),
 	)
 
-	// Apply sidebar style with proper height constraint
-	return sidebarStyle.
-		Height(m.height - 2).
-		Render(content)
+	return sidebarStyle.Height(m.height - 2).Render(content)
 }

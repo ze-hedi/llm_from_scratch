@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yourusername/chatbot-tui/internal/settings"
 	"github.com/yourusername/chatbot-tui/internal/tui"
+	"github.com/yourusername/chatbot-tui/pkg/chatbot"
 	"github.com/yourusername/chatbot-tui/pkg/runtime"
 )
 
@@ -34,7 +35,9 @@ func newSettingsCmd() *cobra.Command {
 					fmt.Println("✓ Model settings saved successfully!")
 					fmt.Println("\nStarting chat with selected model...")
 
-					chatModel := tui.NewModel(runtime.NewClient("http://localhost:5000", "http://localhost:4000"))
+					client := runtime.NewClient("http://localhost:5000", "http://localhost:4000")
+					bot := chatbot.NewBot(client)
+					chatModel := tui.NewModel(bot)
 					chatProgram := tea.NewProgram(
 						chatModel,
 						tea.WithAltScreen(),
