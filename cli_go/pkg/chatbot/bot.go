@@ -87,7 +87,7 @@ func (b *Bot) readNextEvent(sessionID string, ch <-chan runtime.SSEEvent) tea.Ms
 	case "done":
 		return SessionStreamDoneMsg{SessionID: sessionID}
 	case "error":
-		return SessionStreamErrorMsg{SessionID: sessionID, Err: fmt.Errorf("agent error: %s", event.Message)}
+		return SessionStreamChunkMsg{SessionID: sessionID, Chunk: "\n\n**Error:** " + event.Message + "\n\n"}
 	default:
 		return SessionStreamChunkMsg{SessionID: sessionID, Chunk: event.Text}
 	}

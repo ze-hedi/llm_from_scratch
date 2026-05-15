@@ -185,7 +185,7 @@ func (c *Client) ChatStream(sessionID, message string) (<-chan SSEEvent, error) 
 
 			ch <- event
 
-			if event.Type == "done" || event.Type == "error" {
+			if event.Type == "done" {
 				return
 			}
 		}
