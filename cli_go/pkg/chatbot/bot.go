@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yourusername/chatbot-tui/pkg/runtime"
 )
 
 type Role string
@@ -32,20 +33,161 @@ type StreamErrorMsg struct {
 	Err error
 }
 
+type StreamThinkingMsg struct {
+	Text string
+}
+
+type StreamToolStartMsg struct {
+	Name string
+	Args string
+}
+
+type StreamToolEndMsg struct {
+	Name    string
+	Result  string
+	IsError bool
+}
+
+type AgentInitializedMsg struct {
+	AgentID   string
+	SessionID string
+	Name      string
+}
+
 type Bot struct {
 	name         string
 	random       *rand.Rand
 	SystemPrompt string
+
+	// Runtime integration
+	client     *runtime.Client
+	sessionID  string
+	agentID    string
+	modelID    string
+	sseChannel <-chan runtime.SSEEvent
 }
 
-func NewBot() *Bot {
+func NewBot(client *runtime.Client) *Bot {
 	return &Bot{
 		name:         "ChatBot",
 		random:       rand.New(rand.NewSource(time.Now().UnixNano())),
 		SystemPrompt: "You are a helpful AI assistant. Be friendly and conversational.",
+		client:       client,
 	}
 }
 
+// Client returns the runtime client (used by slash commands).
+func (b *Bot) Client() *runtime.Client {
+	return b.client
+}
+
+// SessionID returns the active session ID.
+func (b *Bot) SessionID() string {
+	return b.sessionID
+}
+
+// AgentID returns the active agent ID.
+func (b *Bot) AgentID() string {
+	return b.agentID
+}
+
+// InitAgent creates a new agent session on the runtime server.
+func (b *Bot) InitAgent(modelID, systemPrompt string) tea.Cmd {
+	if b.client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		req := runtime.RunRequest{
+			Agent: runtime.AgentData{
+				ID:    "tui-chat-default",
+				Name:  "TUI Assistant",
+				Model: modelID,
+			},
+		}
+		if systemPrompt != "" {
+			req.Files = []runtime.FilePayload{
+				{Type: "soul", Content: systemPrompt},
+			}
+		}
+
+		resp, err := b.client.Run(req)
+		if err != nil {
+			return StreamErrorMsg{Err: fmt.Errorf("init agent: %w", err)}
+		}
+
+		b.sessionID = resp.SessionID
+		b.agentID = resp.AgentID
+		return AgentInitializedMsg{
+			AgentID:   resp.AgentID,
+			SessionID: resp.SessionID,
+			Name:      resp.Name,
+		}
+	}
+}
+
+// SetActiveAgent sets the bot to use an existing agent session.
+func (b *Bot) SetActiveAgent(agentID, sessionID, name string) {
+	b.agentID = agentID
+	b.sessionID = sessionID
+}
+
+// GetResponseStream returns a tea.Cmd that streams a response from the runtime.
+// Falls back to pattern matching if no client or session is available.
+func (b *Bot) GetResponseStream(input string) tea.Cmd {
+	if b.client == nil || b.sessionID == "" {
+		return func() tea.Msg {
+			return StreamChunkMsg{Chunk: b.GetResponse(input)}
+		}
+	}
+
+	return func() tea.Msg {
+		ch, err := b.client.ChatStream(b.sessionID, input)
+		if err != nil {
+			return StreamErrorMsg{Err: fmt.Errorf("chat stream: %w", err)}
+		}
+		b.sseChannel = ch
+		return b.readNextSSEEvent()
+	}
+}
+
+// ContinueStream returns a tea.Cmd that reads the next SSE event from the active stream.
+func (b *Bot) ContinueStream() tea.Cmd {
+	if b.sseChannel == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		return b.readNextSSEEvent()
+	}
+}
+
+func (b *Bot) readNextSSEEvent() tea.Msg {
+	event, ok := <-b.sseChannel
+	if !ok {
+		b.sseChannel = nil
+		return StreamDoneMsg{}
+	}
+
+	switch event.Type {
+	case "delta":
+		return StreamChunkMsg{Chunk: event.Text}
+	case "thinking":
+		return StreamThinkingMsg{Text: event.Text}
+	case "tool_start":
+		return StreamToolStartMsg{Name: event.Name, Args: string(event.Args)}
+	case "tool_end":
+		return StreamToolEndMsg{Name: event.Name, Result: event.Result, IsError: event.IsError}
+	case "done":
+		b.sseChannel = nil
+		return StreamDoneMsg{}
+	case "error":
+		b.sseChannel = nil
+		return StreamErrorMsg{Err: fmt.Errorf("agent error: %s", event.Message)}
+	default:
+		return StreamChunkMsg{Chunk: event.Text}
+	}
+}
+
+// GetResponse returns a pattern-matched response (offline fallback).
 func (b *Bot) GetResponse(input string) string {
 	input = strings.ToLower(strings.TrimSpace(input))
 
@@ -127,11 +269,4 @@ func (b *Bot) generateThought(input string) string {
 		"Based on what you're asking, I'd say it's quite nuanced. Want to dive deeper?",
 	}
 	return b.randomChoice(thoughts)
-}
-
-// GetResponseStream returns a tea.Cmd that uses pattern-matching to generate a response.
-func (b *Bot) GetResponseStream(input string) tea.Cmd {
-	return func() tea.Msg {
-		return StreamChunkMsg{Chunk: b.GetResponse(input)}
-	}
 }

@@ -1,6 +1,8 @@
 package coordinator
 
 import (
+	"fmt"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yourusername/chatbot-tui/extensions/dino/game"
 	dinoTui "github.com/yourusername/chatbot-tui/extensions/dino/tui"
@@ -11,6 +13,7 @@ import (
 	"github.com/yourusername/chatbot-tui/internal/settings"
 	"github.com/yourusername/chatbot-tui/internal/systemprompt"
 	"github.com/yourusername/chatbot-tui/internal/tui"
+	"github.com/yourusername/chatbot-tui/pkg/runtime"
 )
 
 // ViewType represents the current active view
@@ -37,32 +40,47 @@ type LaunchExtensionMsg struct {
 	ExtensionID string
 }
 
+// sessionCreatedMsg is sent after POST /runtime/run succeeds.
+type sessionCreatedMsg struct {
+	SessionID string
+	AgentID   string
+	Name      string
+}
+
+// sessionErrorMsg is sent if POST /runtime/run fails.
+type sessionErrorMsg struct {
+	Err error
+}
+
 // Model is the coordinator that manages different views
 type Model struct {
 	currentView       ViewType
 	chatModel         tui.Model
+	chatReady         bool
 	extensionsModel   extensions.Model
 	tamagotchiModel   tamagotchiTui.Model
 	dinoModel         dinoTui.Model
 	settingsModel     settings.SettingsModel
 	systemPromptModel systemprompt.SystemPromptModel
 	agentListModel    agentlist.Model
+	client            *runtime.Client
 	width             int
 	height            int
 }
 
-// NewModel creates a new coordinator model starting with chat
+// NewModel creates a new coordinator model starting on the agent list
 func NewModel() Model {
+	client := runtime.NewClient("http://localhost:5000", "http://localhost:4000")
 	return Model{
-		currentView:     ChatView,
-		chatModel:       tui.NewModel(),
+		currentView:    AgentListView,
+		agentListModel: agentlist.NewModel(client),
 		extensionsModel: extensions.NewModel(),
+		client:         client,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	// Initialize the chat view
-	return m.chatModel.Init()
+	return m.agentListModel.Init()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -74,8 +92,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		// Propagate to all models
 		var tmpModel tea.Model
-		tmpModel, _ = m.chatModel.Update(msg)
-		m.chatModel = tmpModel.(tui.Model)
+		if m.chatReady {
+			tmpModel, _ = m.chatModel.Update(msg)
+			m.chatModel = tmpModel.(tui.Model)
+		}
 		tmpModel, _ = m.extensionsModel.Update(msg)
 		m.extensionsModel = tmpModel.(extensions.Model)
 		if m.currentView == TamagotchiView {
@@ -103,12 +123,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Global Ctrl+G handling for Agent List
 		if msg.String() == "ctrl+g" {
 			if m.currentView == ChatView {
-				// Switch to agent list view
 				m.currentView = AgentListView
-				m.agentListModel = agentlist.NewModel()
+				m.agentListModel = agentlist.NewModel(m.client)
 				return m, m.agentListModel.Init()
-			} else if m.currentView == AgentListView {
-				// Switch back to chat
+			} else if m.currentView == AgentListView && m.chatReady {
 				m.currentView = ChatView
 				return m, nil
 			}
@@ -167,16 +185,59 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// For Esc, only quit from chat view, otherwise go back to chat
+		// For Esc, quit if on chat or no chat ready, otherwise go back to chat
 		if msg.String() == "esc" {
-			if m.currentView == ChatView {
+			if m.currentView == ChatView || !m.chatReady {
 				return m, tea.Quit
-			} else {
-				// Return to chat (cancel any changes)
-				m.currentView = ChatView
-				return m, nil
+			}
+			m.currentView = ChatView
+			return m, nil
+		}
+	}
+
+	// Handle agent selection — create a new session via /runtime/run
+	if sel, ok := msg.(agentlist.AgentSelectedMsg); ok {
+		client := m.client
+		return m, func() tea.Msg {
+			resp, err := client.Run(runtime.RunRequest{
+				Agent: runtime.AgentData{
+					ID:          sel.AgentID,
+					Name:        sel.Name,
+					Model:       sel.Model,
+					Description: sel.Description,
+				},
+			})
+			if err != nil {
+				return sessionErrorMsg{Err: fmt.Errorf("create session: %w", err)}
+			}
+			return sessionCreatedMsg{
+				SessionID: resp.SessionID,
+				AgentID:   resp.AgentID,
+				Name:      resp.Name,
 			}
 		}
+	}
+
+	// Handle session created — build the chat model and switch to chat
+	if created, ok := msg.(sessionCreatedMsg); ok {
+		m.chatModel = tui.NewModel(m.client)
+		m.chatReady = true
+		m.chatModel.GetBot().SetActiveAgent(created.AgentID, created.SessionID, created.Name)
+		// Propagate current window size to the new chat model
+		if m.width > 0 && m.height > 0 {
+			var tmpModel tea.Model
+			tmpModel, _ = m.chatModel.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+			m.chatModel = tmpModel.(tui.Model)
+		}
+		m.currentView = ChatView
+		return m, m.chatModel.Init()
+	}
+
+	// Handle session creation error — stay on agent list
+	if errMsg, ok := msg.(sessionErrorMsg); ok {
+		// Show error on agent list (reuse the view, user can retry)
+		_ = errMsg
+		return m, nil
 	}
 
 	// Route messages to the appropriate view
@@ -280,13 +341,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newModel, cmd = m.agentListModel.Update(msg)
 		m.agentListModel = newModel.(agentlist.Model)
 
-		// Check if user wants to go back (pressed Esc, q, or Ctrl+G)
-		// This is handled by the agent list model returning tea.Quit
-		// which we intercept here to switch back to chat
-		if _, ok := msg.(tea.KeyMsg); ok {
-			if keyMsg := msg.(tea.KeyMsg); keyMsg.String() == "esc" || keyMsg.String() == "q" || keyMsg.String() == "ctrl+g" {
-				m.currentView = ChatView
-				return m, nil
+		// Esc/q/Ctrl+G: go back to chat if ready, otherwise quit
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			if keyMsg.String() == "esc" || keyMsg.String() == "q" || keyMsg.String() == "ctrl+g" {
+				if m.chatReady {
+					m.currentView = ChatView
+					return m, nil
+				}
+				return m, tea.Quit
 			}
 		}
 		return m, cmd

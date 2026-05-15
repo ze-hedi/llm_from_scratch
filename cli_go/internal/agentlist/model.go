@@ -6,14 +6,35 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/yourusername/chatbot-tui/pkg/runtime"
 )
 
 type AgentInfo struct {
+	ID          string
 	Name        string
 	Description string
+	Model       string
+	SessionID   string
+}
+
+// AgentSelectedMsg is emitted when the user selects an agent from the list.
+type AgentSelectedMsg struct {
+	AgentID     string
+	Name        string
+	Description string
+	Model       string
+}
+
+type agentsLoadedMsg struct {
+	agents []AgentInfo
+}
+
+type agentsErrorMsg struct {
+	err error
 }
 
 type Model struct {
+	client        *runtime.Client
 	agents        []AgentInfo
 	selectedIndex int
 	width         int
@@ -30,16 +51,37 @@ type Model struct {
 // HidePopupMsg is sent after a delay to hide the popup
 type HidePopupMsg struct{}
 
-func NewModel() Model {
+func NewModel(client *runtime.Client) Model {
 	return Model{
+		client:        client,
 		agents:        []AgentInfo{},
 		selectedIndex: 0,
-		loading:       false,
+		loading:       true,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	if m.client == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		agentDataList, err := m.client.ListAgents()
+		if err != nil {
+			return agentsErrorMsg{err: err}
+		}
+
+		var agents []AgentInfo
+		for _, ad := range agentDataList {
+			agents = append(agents, AgentInfo{
+				ID:          ad.ID,
+				Name:        ad.Name,
+				Description: ad.Description,
+				Model:       ad.Model,
+			})
+		}
+
+		return agentsLoadedMsg{agents: agents}
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -48,8 +90,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
+	case agentsLoadedMsg:
+		m.agents = msg.agents
+		m.loading = false
+		m.err = nil
+
+	case agentsErrorMsg:
+		m.err = msg.err
+		m.loading = false
+
 	case HidePopupMsg:
-		// Hide the popup after the timer expires
 		m.showPopup = false
 		m.popupMessage = ""
 		m.agentResponse = nil
@@ -81,14 +131,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "enter":
-			// Select agent (only if popup not shown)
 			if !m.showPopup && !m.loading && len(m.agents) > 0 {
-				agentName := m.agents[m.selectedIndex].Name
-				m.showPopup = true
-				m.popupMessage = fmt.Sprintf("Selected: %s", agentName)
-				m.agentResponse = nil
-				m.popupScroll = 0
-				m.activeForm = "main"
+				agent := m.agents[m.selectedIndex]
+				return m, func() tea.Msg {
+					return AgentSelectedMsg{
+						AgentID:     agent.ID,
+						Name:        agent.Name,
+						Description: agent.Description,
+						Model:       agent.Model,
+					}
+				}
 			}
 
 		case "f2":
@@ -144,17 +196,18 @@ func (m Model) View() string {
 	for i, agent := range m.agents {
 		cursor := "  "
 
+		modelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
+
 		if i == m.selectedIndex {
 			cursor = "▶ "
-			// For selected item, apply border around the whole item but keep description styling normal
 			nameStyled := lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("86")).
 				Render(fmt.Sprintf("%s%s", cursor, agent.Name))
 			description := descriptionStyle.Render(fmt.Sprintf("  %s", agent.Description))
-			agentContent := nameStyled + "\n" + description
+			model := modelStyle.Render(fmt.Sprintf("  %s", agent.Model))
+			agentContent := nameStyled + "\n" + description + "\n" + model
 
-			// Wrap in border only
 			bordered := lipgloss.NewStyle().
 				Padding(0, 1).
 				Border(lipgloss.RoundedBorder()).
@@ -162,11 +215,12 @@ func (m Model) View() string {
 				Render(agentContent)
 			agentsList += bordered + "\n\n"
 		} else {
-			// For non-selected items, use the normal style
 			name := fmt.Sprintf("%s%s", cursor, agent.Name)
 			description := fmt.Sprintf("  %s", agent.Description)
+			model := fmt.Sprintf("  %s", agent.Model)
 			agentsList += agentItemStyle.Render(name) + "\n"
-			agentsList += descriptionStyle.Render(description) + "\n\n"
+			agentsList += descriptionStyle.Render(description) + "\n"
+			agentsList += modelStyle.Render(model) + "\n\n"
 		}
 	}
 

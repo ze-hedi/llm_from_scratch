@@ -13,6 +13,7 @@ import (
 	"github.com/yourusername/chatbot-tui/internal/commands"
 	"github.com/yourusername/chatbot-tui/internal/settings"
 	"github.com/yourusername/chatbot-tui/pkg/chatbot"
+	"github.com/yourusername/chatbot-tui/pkg/runtime"
 )
 
 type Model struct {
@@ -35,7 +36,7 @@ type Model struct {
 	lastKeyTime    time.Time // Track last keystroke for paste detection
 }
 
-func NewModel() Model {
+func NewModel(client *runtime.Client) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Type your message..."
 	ta.Focus()
@@ -66,12 +67,33 @@ func NewModel() Model {
 		glamour.WithWordWrap(80),
 	)
 
+	bot := chatbot.NewBot(client)
+	cmdHandler := commands.NewHandler()
+
+	// Register runtime commands
+	cmdHandler.RegisterCommand("status", func(args []string) commands.CommandResult {
+		if bot.Client() == nil {
+			return commands.CommandResult{IsCommand: true, Message: "Not connected to server"}
+		}
+		info := fmt.Sprintf("Agent: %s\nSession: %s", bot.AgentID(), bot.SessionID())
+		return commands.CommandResult{IsCommand: true, Message: info}
+	})
+	cmdHandler.RegisterCommand("abort", func(args []string) commands.CommandResult {
+		if bot.Client() == nil || bot.SessionID() == "" {
+			return commands.CommandResult{IsCommand: true, ErrorMessage: "No active session"}
+		}
+		if err := bot.Client().AbortAgent(bot.SessionID()); err != nil {
+			return commands.CommandResult{IsCommand: true, ErrorMessage: err.Error()}
+		}
+		return commands.CommandResult{IsCommand: true, Message: "Session aborted"}
+	})
+
 	return Model{
 		textarea:       ta,
 		viewport:       vp,
 		messages:       []chatbot.Message{},
-		bot:            chatbot.NewBot(),
-		cmdHandler:     commands.NewHandler(),
+		bot:            bot,
+		cmdHandler:     cmdHandler,
 		ready:          false,
 		inputTokens:    0,
 		outputTokens:   0,
@@ -258,35 +280,73 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case chatbot.StreamChunkMsg:
-		// Streaming chunk received
 		if m.isStreaming && len(m.messages) > 0 {
-			// Update the last message (bot response) with the chunk
 			lastIdx := len(m.messages) - 1
-			m.messages[lastIdx].Content = msg.Chunk
-
-			// Track output tokens
+			if m.messages[lastIdx].Content == "⏳ Thinking..." {
+				m.messages[lastIdx].Content = msg.Chunk
+			} else {
+				m.messages[lastIdx].Content += msg.Chunk
+			}
 			m.outputTokens += estimateTokens(msg.Chunk)
-
-			// Update viewport
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
-
-			// Mark streaming as done
-			m.isStreaming = false
 		}
+		return m, m.bot.ContinueStream()
+
+	case chatbot.StreamThinkingMsg:
+		if m.isStreaming && len(m.messages) > 0 {
+			lastIdx := len(m.messages) - 1
+			if m.messages[lastIdx].Content == "⏳ Thinking..." {
+				m.messages[lastIdx].Content = ""
+			}
+			m.messages[lastIdx].Content += msg.Text
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+		}
+		return m, m.bot.ContinueStream()
+
+	case chatbot.StreamToolStartMsg:
+		if m.isStreaming && len(m.messages) > 0 {
+			lastIdx := len(m.messages) - 1
+			if m.messages[lastIdx].Content == "⏳ Thinking..." {
+				m.messages[lastIdx].Content = ""
+			}
+			m.messages[lastIdx].Content += fmt.Sprintf("\n\n> Running **%s**...\n", msg.Name)
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+		}
+		return m, m.bot.ContinueStream()
+
+	case chatbot.StreamToolEndMsg:
+		if m.isStreaming && len(m.messages) > 0 {
+			lastIdx := len(m.messages) - 1
+			status := "done"
+			if msg.IsError {
+				status = "error"
+			}
+			m.messages[lastIdx].Content += fmt.Sprintf("> **%s** %s\n\n", msg.Name, status)
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+		}
+		return m, m.bot.ContinueStream()
+
+	case chatbot.StreamDoneMsg:
+		m.isStreaming = false
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
 		return m, nil
 
 	case chatbot.StreamErrorMsg:
-		// Streaming error occurred
-		if m.isStreaming && len(m.messages) > 0 {
+		if len(m.messages) > 0 {
 			lastIdx := len(m.messages) - 1
-			m.messages[lastIdx].Content = fmt.Sprintf("❌ Error: %v", msg.Err)
-			m.isStreaming = false
-
-			// Update viewport
-			m.viewport.SetContent(m.renderMessages())
-			m.viewport.GotoBottom()
+			m.messages[lastIdx].Content = fmt.Sprintf("Error: %v", msg.Err)
 		}
+		m.isStreaming = false
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, nil
+
+	case chatbot.AgentInitializedMsg:
 		return m, nil
 
 	case error:
