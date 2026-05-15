@@ -17,6 +17,15 @@ type AgentInfo struct {
 	Model       string
 }
 
+type OrchestratorInfo struct {
+	ID          string
+	Name        string
+	Description string
+	Model       string
+	Playground  string
+	SubAgents   []runtime.SubAgentEntry
+}
+
 // AgentSelectedMsg is emitted when the user selects an agent to create a new session.
 type AgentSelectedMsg struct {
 	AgentID     string
@@ -25,58 +34,98 @@ type AgentSelectedMsg struct {
 	Model       string
 }
 
+// OrchestratorSelectedMsg is emitted when the user selects an orchestrator.
+type OrchestratorSelectedMsg struct {
+	OrchestratorID string
+	Name           string
+	Model          string
+	Playground     string
+	SubAgents      []runtime.SubAgentEntry
+}
+
 // SessionSelectedMsg is emitted when the user selects an existing session.
 type SessionSelectedMsg struct {
 	SessionID string
 }
 
+type tabMode int
+
+const (
+	agentsTab tabMode = iota
+	orchestratorsTab
+)
+
 type agentsLoadedMsg struct {
 	agents []AgentInfo
 }
 
-type agentsErrorMsg struct {
+type orchestratorsLoadedMsg struct {
+	orchestrators []OrchestratorInfo
+}
+
+type loadErrorMsg struct {
 	err error
 }
 
 // listItem represents one row in the flat navigation list.
 type listItem struct {
-	kind      string // "agent" or "session"
+	kind      string // "agent", "orchestrator", or "session"
 	agentIdx  int
+	orchIdx   int
 	sessionID string
 }
 
 type Model struct {
 	client        *runtime.Client
 	agents        []AgentInfo
+	orchestrators []OrchestratorInfo
 	openSessions  []*chatbot.Session
 	flatItems     []listItem
 	selectedIndex int
+	tab           tabMode
 	width         int
 	height        int
 	err           error
+	agentsLoaded  bool
+	orchsLoaded   bool
 	loading       bool
 }
 
 func NewModel(client *runtime.Client, sessions []*chatbot.Session) Model {
 	return Model{
-		client:       client,
-		agents:       []AgentInfo{},
-		openSessions: sessions,
+		client:        client,
+		agents:        []AgentInfo{},
+		orchestrators: []OrchestratorInfo{},
+		openSessions:  sessions,
 		selectedIndex: 0,
-		loading:      true,
+		tab:           agentsTab,
+		loading:       true,
 	}
 }
 
 func (m *Model) buildFlatItems() {
 	m.flatItems = nil
-	for i, agent := range m.agents {
-		m.flatItems = append(m.flatItems, listItem{kind: "agent", agentIdx: i})
-		// Add open sessions for this agent
-		for _, s := range m.openSessions {
-			if s.AgentID == agent.ID {
-				m.flatItems = append(m.flatItems, listItem{kind: "session", agentIdx: i, sessionID: s.SessionID})
+	if m.tab == agentsTab {
+		for i, agent := range m.agents {
+			m.flatItems = append(m.flatItems, listItem{kind: "agent", agentIdx: i})
+			for _, s := range m.openSessions {
+				if s.AgentID == agent.ID {
+					m.flatItems = append(m.flatItems, listItem{kind: "session", agentIdx: i, sessionID: s.SessionID})
+				}
 			}
 		}
+	} else {
+		for i, orch := range m.orchestrators {
+			m.flatItems = append(m.flatItems, listItem{kind: "orchestrator", orchIdx: i})
+			for _, s := range m.openSessions {
+				if s.AgentID == orch.ID {
+					m.flatItems = append(m.flatItems, listItem{kind: "session", orchIdx: i, sessionID: s.SessionID})
+				}
+			}
+		}
+	}
+	if m.selectedIndex >= len(m.flatItems) {
+		m.selectedIndex = 0
 	}
 }
 
@@ -84,24 +133,43 @@ func (m Model) Init() tea.Cmd {
 	if m.client == nil {
 		return nil
 	}
-	return func() tea.Msg {
-		agentDataList, err := m.client.ListAgents()
-		if err != nil {
-			return agentsErrorMsg{err: err}
-		}
-
-		var agents []AgentInfo
-		for _, ad := range agentDataList {
-			agents = append(agents, AgentInfo{
-				ID:          ad.ID,
-				Name:        ad.Name,
-				Description: ad.Description,
-				Model:       ad.Model,
-			})
-		}
-
-		return agentsLoadedMsg{agents: agents}
-	}
+	client := m.client
+	return tea.Batch(
+		func() tea.Msg {
+			agentDataList, err := client.ListAgents()
+			if err != nil {
+				return loadErrorMsg{err: err}
+			}
+			var agents []AgentInfo
+			for _, ad := range agentDataList {
+				agents = append(agents, AgentInfo{
+					ID:          ad.ID,
+					Name:        ad.Name,
+					Description: ad.Description,
+					Model:       ad.Model,
+				})
+			}
+			return agentsLoadedMsg{agents: agents}
+		},
+		func() tea.Msg {
+			orchDataList, err := client.ListOrchestrators()
+			if err != nil {
+				return loadErrorMsg{err: err}
+			}
+			var orchs []OrchestratorInfo
+			for _, od := range orchDataList {
+				orchs = append(orchs, OrchestratorInfo{
+					ID:          od.ID,
+					Name:        od.Name,
+					Description: od.Description,
+					Model:       od.Model,
+					Playground:  od.Playground,
+					SubAgents:   od.SubAgents,
+				})
+			}
+			return orchestratorsLoadedMsg{orchestrators: orchs}
+		},
+	)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -112,11 +180,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentsLoadedMsg:
 		m.agents = msg.agents
-		m.loading = false
+		m.agentsLoaded = true
+		if m.orchsLoaded {
+			m.loading = false
+		}
 		m.err = nil
 		m.buildFlatItems()
 
-	case agentsErrorMsg:
+	case orchestratorsLoadedMsg:
+		m.orchestrators = msg.orchestrators
+		m.orchsLoaded = true
+		if m.agentsLoaded {
+			m.loading = false
+		}
+		m.err = nil
+		m.buildFlatItems()
+
+	case loadErrorMsg:
 		m.err = msg.err
 		m.loading = false
 
@@ -124,6 +204,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q", "esc", "ctrl+g":
 			return m, tea.Quit
+
+		case "tab":
+			if !m.loading {
+				if m.tab == agentsTab {
+					m.tab = orchestratorsTab
+				} else {
+					m.tab = agentsTab
+				}
+				m.selectedIndex = 0
+				m.buildFlatItems()
+			}
 
 		case "up", "k":
 			if !m.loading && m.selectedIndex > 0 {
@@ -138,7 +229,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if !m.loading && len(m.flatItems) > 0 && m.selectedIndex < len(m.flatItems) {
 				item := m.flatItems[m.selectedIndex]
-				if item.kind == "agent" {
+				switch item.kind {
+				case "agent":
 					agent := m.agents[item.agentIdx]
 					return m, func() tea.Msg {
 						return AgentSelectedMsg{
@@ -148,7 +240,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							Model:       agent.Model,
 						}
 					}
-				} else if item.kind == "session" {
+				case "orchestrator":
+					orch := m.orchestrators[item.orchIdx]
+					return m, func() tea.Msg {
+						return OrchestratorSelectedMsg{
+							OrchestratorID: orch.ID,
+							Name:           orch.Name,
+							Model:          orch.Model,
+							Playground:     orch.Playground,
+							SubAgents:      orch.SubAgents,
+						}
+					}
+				case "session":
 					sid := item.sessionID
 					return m, func() tea.Msg {
 						return SessionSelectedMsg{SessionID: sid}
@@ -163,28 +266,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	if m.loading {
-		content := loadingStyle.Render("⏳ Fetching agents from server...\n\nPress Ctrl+G or Esc to return to chat.")
+		content := loadingStyle.Render("⏳ Fetching agents & orchestrators...\n\nPress Ctrl+G or Esc to return to chat.")
 		return lipgloss.NewStyle().Width(m.width).Height(m.height).Padding(2, 4).Render(content)
 	}
 
 	if m.err != nil {
-		content := errorStyle.Render(fmt.Sprintf("Error loading agents: %v\n\nPress Ctrl+G or Esc to return to chat.", m.err))
+		content := errorStyle.Render(fmt.Sprintf("Error: %v\n\nPress Ctrl+G or Esc to return to chat.", m.err))
 		return lipgloss.NewStyle().Width(m.width).Height(m.height).Padding(2, 4).Render(content)
 	}
+
+	// Tab bar
+	agentsLabel := "  Agents  "
+	orchLabel := "  Orchestrators  "
+	activeTabStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86")).
+		Border(lipgloss.NormalBorder(), false, false, true, false).BorderForeground(lipgloss.Color("86"))
+	inactiveTabStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+
+	var tabBar string
+	if m.tab == agentsTab {
+		tabBar = activeTabStyle.Render(agentsLabel) + "  " + inactiveTabStyle.Render(orchLabel)
+	} else {
+		tabBar = inactiveTabStyle.Render(agentsLabel) + "  " + activeTabStyle.Render(orchLabel)
+	}
+
+	subtitle := subtitleStyle.Render("Tab to switch | Enter to select | Enter on session to resume")
 
 	if len(m.flatItems) == 0 {
-		content := errorStyle.Render("No agents available.\n\nPress Ctrl+G or Esc to return to chat.")
+		label := "agents"
+		if m.tab == orchestratorsTab {
+			label = "orchestrators"
+		}
+		content := lipgloss.JoinVertical(lipgloss.Left,
+			tabBar, subtitle, "",
+			errorStyle.Render(fmt.Sprintf("No %s available.", label)),
+		)
 		return lipgloss.NewStyle().Width(m.width).Height(m.height).Padding(2, 4).Render(content)
 	}
-
-	header := titleStyle.Render("🤖 Available Agents")
-	subtitle := subtitleStyle.Render("Enter on agent = new session | Enter on session = switch to it")
 
 	var listContent string
 	modelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
 	sessionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).PaddingLeft(4)
-	sessionActiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("86")).PaddingLeft(4)
 	streamingBadge := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
+	subAgentCountStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("213"))
 
 	for idx, item := range m.flatItems {
 		isSelected := idx == m.selectedIndex
@@ -211,8 +334,31 @@ func (m Model) View() string {
 				listContent += descriptionStyle.Render(desc) + "\n"
 				listContent += modelStyle.Render(model) + "\n"
 			}
+		} else if item.kind == "orchestrator" {
+			orch := m.orchestrators[item.orchIdx]
+			cursor := "  "
+			subCount := subAgentCountStyle.Render(fmt.Sprintf("  %d sub-agents", len(orch.SubAgents)))
+			if isSelected {
+				cursor = "▶ "
+				nameStyled := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("213")).
+					Render(fmt.Sprintf("%s%s", cursor, orch.Name))
+				desc := descriptionStyle.Render(fmt.Sprintf("  %s", orch.Description))
+				model := modelStyle.Render(fmt.Sprintf("  %s", orch.Model))
+				orchContent := nameStyled + "\n" + desc + "\n" + model + "\n" + subCount
+				bordered := lipgloss.NewStyle().Padding(0, 1).
+					Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("213")).
+					Render(orchContent)
+				listContent += bordered + "\n"
+			} else {
+				name := fmt.Sprintf("%s%s", cursor, orch.Name)
+				desc := fmt.Sprintf("  %s", orch.Description)
+				model := fmt.Sprintf("  %s", orch.Model)
+				listContent += agentItemStyle.Render(name) + "\n"
+				listContent += descriptionStyle.Render(desc) + "\n"
+				listContent += modelStyle.Render(model) + "\n"
+				listContent += subCount + "\n"
+			}
 		} else if item.kind == "session" {
-			// Find the session
 			var session *chatbot.Session
 			for _, s := range m.openSessions {
 				if s.SessionID == item.sessionID {
@@ -242,12 +388,10 @@ func (m Model) View() string {
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left,
-		header, subtitle, "",
+		tabBar, subtitle, "",
 		dividerStyle.Render(strings.Repeat("─", 53)), "",
 		listContent,
 	)
-
-	_ = sessionActiveStyle // reserved for future use
 
 	return lipgloss.NewStyle().Width(m.width).Height(m.height).Padding(2, 4).Render(content)
 }

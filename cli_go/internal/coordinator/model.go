@@ -262,6 +262,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Handle orchestrator selection — create a new orchestrator session
+	if sel, ok := msg.(agentlist.OrchestratorSelectedMsg); ok {
+		client := m.client
+		return m, func() tea.Msg {
+			// Build the agents array with stateful flag from SubAgentEntries
+			agents := make([]runtime.AgentData, len(sel.SubAgents))
+			for i, sa := range sel.SubAgents {
+				agents[i] = sa.Agent
+				agents[i].Stateful = sa.Stateful
+			}
+			resp, err := client.RunOrchestrator(runtime.OrchestratorRunRequest{
+				OrchestratorID: sel.OrchestratorID,
+				Model:          sel.Model,
+				Playground:     sel.Playground,
+				SystemPrompt:   "",
+				Agents:         agents,
+			})
+			if err != nil {
+				return sessionErrorMsg{Err: fmt.Errorf("create orchestrator session: %w", err)}
+			}
+			return sessionCreatedMsg{
+				SessionID: resp.SessionID,
+				AgentID:   resp.OrchestratorID,
+				Name:      sel.Name,
+			}
+		}
+	}
+
 	// Handle session selection — switch to existing session
 	if sel, ok := msg.(agentlist.SessionSelectedMsg); ok {
 		if !m.chatReady {

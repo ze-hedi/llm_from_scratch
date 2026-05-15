@@ -29,6 +29,7 @@ type AgentData struct {
 	WorkingDir    string `json:"workingDir,omitempty"`
 	Playground    string `json:"playground,omitempty"`
 	APIKey        string `json:"apiKey,omitempty"`
+	Stateful      bool   `json:"stateful,omitempty"`
 }
 
 // FilePayload carries a soul or skills file for agent initialization.
@@ -62,6 +63,41 @@ type StatusResponse struct {
 	ActiveAgents    []string          `json:"activeAgents"`
 	SessionAgentMap map[string]string `json:"sessionAgentMap"`
 	CurrentAgentID  string            `json:"currentAgentId"`
+}
+
+// SubAgentEntry represents one sub-agent inside an orchestrator (from /api/orchestrators).
+type SubAgentEntry struct {
+	Agent    AgentData `json:"agent"`
+	Stateful bool      `json:"stateful"`
+}
+
+// OrchestratorData describes an orchestrator from the backend API.
+type OrchestratorData struct {
+	ID          string          `json:"_id"`
+	Name        string          `json:"name"`
+	Model       string          `json:"model"`
+	Description string          `json:"description,omitempty"`
+	Playground  string          `json:"playground,omitempty"`
+	SubAgents   []SubAgentEntry `json:"subAgents"`
+}
+
+// OrchestratorRunRequest is the body for POST /runtime/orchestrator/run.
+type OrchestratorRunRequest struct {
+	OrchestratorID string      `json:"orchestratorId"`
+	SessionID      string      `json:"sessionId,omitempty"`
+	SystemPrompt   string      `json:"systemPrompt"`
+	Model          string      `json:"model,omitempty"`
+	Playground     string      `json:"playground,omitempty"`
+	Agents         []AgentData `json:"agents"`
+}
+
+// OrchestratorRunResponse is returned by POST /runtime/orchestrator/run.
+type OrchestratorRunResponse struct {
+	Success        bool     `json:"success"`
+	OrchestratorID string   `json:"orchestratorId"`
+	SessionID      string   `json:"sessionId"`
+	Model          string   `json:"model"`
+	SubAgents      []string `json:"subAgents"`
 }
 
 // SSEEvent represents a single parsed Server-Sent Event from the chat stream.
@@ -232,5 +268,56 @@ func (c *Client) AbortAgent(sessionID string) error {
 		return fmt.Errorf("runtime error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 	return nil
+}
+
+// ListOrchestrators fetches all available orchestrators from the backend API.
+func (c *Client) ListOrchestrators() ([]OrchestratorData, error) {
+	resp, err := c.HTTPClient.Get(c.APIURL + "/api/orchestrators")
+	if err != nil {
+		return nil, fmt.Errorf("connect to API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var orchestrators []OrchestratorData
+	if err := json.NewDecoder(resp.Body).Decode(&orchestrators); err != nil {
+		return nil, fmt.Errorf("parse orchestrators response: %w", err)
+	}
+	return orchestrators, nil
+}
+
+// RunOrchestrator creates an orchestrator session via POST /runtime/orchestrator/run.
+func (c *Client) RunOrchestrator(req OrchestratorRunRequest) (*OrchestratorRunResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal orchestrator run request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", c.BaseURL+"/runtime/orchestrator/run", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create orchestrator run request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("connect to runtime: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("runtime error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result OrchestratorRunResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse orchestrator run response: %w", err)
+	}
+	return &result, nil
 }
 
