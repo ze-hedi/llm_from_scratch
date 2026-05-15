@@ -214,26 +214,6 @@ func (c *Client) GetStatus() (*StatusResponse, error) {
 	return &result, nil
 }
 
-// GetAgentConfig returns the config and tool list for a given agent session.
-func (c *Client) GetAgentConfig(sessionID string) (map[string]interface{}, error) {
-	resp, err := c.HTTPClient.Get(c.BaseURL + "/runtime/agents/" + sessionID + "/config")
-	if err != nil {
-		return nil, fmt.Errorf("connect to runtime: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("runtime error (status %d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("parse config response: %w", err)
-	}
-	return result, nil
-}
-
 // AbortAgent aborts the active session for the given agent.
 func (c *Client) AbortAgent(sessionID string) error {
 	httpReq, err := http.NewRequest("POST", c.BaseURL+"/runtime/agents/"+sessionID+"/abort", nil)
@@ -253,3 +233,4 @@ func (c *Client) AbortAgent(sessionID string) error {
 	}
 	return nil
 }
+

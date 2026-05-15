@@ -357,6 +357,7 @@ func (m Model) renderHeader(width int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, title, lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(line))
 }
 
+
 func (m Model) renderMessages() string {
 	messages := m.activeMessages()
 	if messages == nil {
