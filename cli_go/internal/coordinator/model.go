@@ -223,6 +223,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chatModel = tui.NewModel(m.client)
 		m.chatReady = true
 		m.chatModel.GetBot().SetActiveAgent(created.AgentID, created.SessionID, created.Name)
+		m.chatModel.SetAgentName(created.Name)
 		// Propagate current window size to the new chat model
 		if m.width > 0 && m.height > 0 {
 			var tmpModel tea.Model

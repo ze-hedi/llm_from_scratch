@@ -31,7 +31,10 @@ type Model struct {
 	sidebarVisible bool
 	currentModel   *settings.Model
 	maxTokens      int
-	isStreaming    bool // Track if we're currently receiving a stream
+	isStreaming     bool
+	wasThinking    bool
+	thinkingText   string
+	agentName      string
 	mdRenderer     *glamour.TermRenderer
 	lastKeyTime    time.Time // Track last keystroke for paste detection
 }
@@ -281,6 +284,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case chatbot.StreamChunkMsg:
 		if m.isStreaming && len(m.messages) > 0 {
+			m.closeThinkingBlock()
 			lastIdx := len(m.messages) - 1
 			if m.messages[lastIdx].Content == "⏳ Thinking..." {
 				m.messages[lastIdx].Content = msg.Chunk
@@ -299,7 +303,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.messages[lastIdx].Content == "⏳ Thinking..." {
 				m.messages[lastIdx].Content = ""
 			}
-			m.messages[lastIdx].Content += msg.Text
+			if !m.wasThinking {
+				// Starting a new thinking block — append marker to existing content
+				m.wasThinking = true
+				m.thinkingText = ""
+			}
+			m.thinkingText += msg.Text
+			// Rebuild: keep everything before this thinking block, then the open block
+			prefix := m.messages[lastIdx].Content
+			// Remove old open block if present
+			oldOpen := "{{THINKING}}" + m.thinkingText[:len(m.thinkingText)-len(msg.Text)]
+			if strings.HasSuffix(prefix, oldOpen) {
+				prefix = prefix[:len(prefix)-len(oldOpen)]
+			}
+			m.messages[lastIdx].Content = prefix + "{{THINKING}}" + m.thinkingText
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
 		}
@@ -311,7 +328,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.messages[lastIdx].Content == "⏳ Thinking..." {
 				m.messages[lastIdx].Content = ""
 			}
-			m.messages[lastIdx].Content += fmt.Sprintf("\n\n> Running **%s**...\n", msg.Name)
+			m.closeThinkingBlock()
+			args := msg.Args
+			if args == "" {
+				args = "{}"
+			}
+			m.messages[lastIdx].Content += fmt.Sprintf("\n\n> 🔧 **%s**\n```json\n%s\n```\n", msg.Name, args)
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
 		}
@@ -320,11 +342,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatbot.StreamToolEndMsg:
 		if m.isStreaming && len(m.messages) > 0 {
 			lastIdx := len(m.messages) - 1
-			status := "done"
-			if msg.IsError {
-				status = "error"
+			result := msg.Result
+			if len(result) > 500 {
+				result = result[:500] + "..."
 			}
-			m.messages[lastIdx].Content += fmt.Sprintf("> **%s** %s\n\n", msg.Name, status)
+			status := "✅"
+			if msg.IsError {
+				status = "❌"
+			}
+			m.messages[lastIdx].Content += fmt.Sprintf("> %s **%s** result:\n```\n%s\n```\n\n", status, msg.Name, result)
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
 		}
@@ -332,6 +358,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case chatbot.StreamDoneMsg:
 		m.isStreaming = false
+		m.wasThinking = false
+		m.thinkingText = ""
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
 		return m, nil
@@ -413,7 +441,7 @@ func (m Model) View() string {
 
 func (m Model) renderInitialView() string {
 	// Centered title
-	titleText := titleStyle.Render("🤖 ChatBot TUI")
+	titleText := titleStyle.Render("🤖 " + m.displayTitle())
 
 	// Welcome message
 	welcomeMsg := lipgloss.NewStyle().
@@ -451,7 +479,7 @@ func (m Model) renderInitialView() string {
 
 func (m Model) renderHeader(width int) string {
 	// Center the title
-	titleText := titleStyle.Render("🤖 ChatBot TUI")
+	titleText := titleStyle.Render("🤖 " + m.displayTitle())
 	title := lipgloss.NewStyle().
 		Width(width).
 		Align(lipgloss.Center).
@@ -485,12 +513,57 @@ func (m Model) renderMessages() string {
 			wrappedContent := wrapText("You: "+msg.Content, maxWidth)
 			sb.WriteString(userMessageStyle.Render(wrappedContent))
 		} else {
-			rendered := msg.Content
-			if m.mdRenderer != nil {
-				if md, err := m.mdRenderer.Render(msg.Content); err == nil {
-					rendered = strings.TrimSpace(md)
+			content := msg.Content
+			var rendered string
+			rest := content
+
+			for {
+				thinkIdx := strings.Index(rest, "{{THINKING}}")
+				if thinkIdx < 0 {
+					break
+				}
+
+				// Render any text before this thinking block
+				before := rest[:thinkIdx]
+				if before != "" {
+					if m.mdRenderer != nil {
+						if md, err := m.mdRenderer.Render(before); err == nil {
+							rendered += strings.TrimSpace(md) + "\n"
+						} else {
+							rendered += before
+						}
+					} else {
+						rendered += before
+					}
+				}
+
+				rest = rest[thinkIdx+len("{{THINKING}}"):]
+
+				endIdx := strings.Index(rest, "{{/THINKING}}")
+				if endIdx >= 0 {
+					rendered += m.renderThinkingBlock(rest[:endIdx]) + "\n"
+					rest = rest[endIdx+len("{{/THINKING}}"):]
+				} else {
+					// Still open — thinking in progress
+					rendered += m.renderThinkingBlock(rest)
+					rest = ""
+					break
 				}
 			}
+
+			// Render remaining text after all thinking blocks
+			if rest != "" {
+				if m.mdRenderer != nil {
+					if md, err := m.mdRenderer.Render(rest); err == nil {
+						rendered += strings.TrimSpace(md)
+					} else {
+						rendered += rest
+					}
+				} else {
+					rendered += rest
+				}
+			}
+
 			label := botMessageStyle.Render("Bot:")
 			sb.WriteString(label + "\n" + lipgloss.NewStyle().PaddingLeft(2).Render(rendered))
 		}
@@ -563,11 +636,65 @@ func (m Model) renderFooter() string {
 	)
 }
 
+// closeThinkingBlock closes an open thinking block in the last message.
+func (m *Model) closeThinkingBlock() {
+	if !m.wasThinking {
+		return
+	}
+	m.wasThinking = false
+	if len(m.messages) > 0 {
+		lastIdx := len(m.messages) - 1
+		// Replace the open "{{THINKING}}...text" with closed "{{THINKING}}...{{/THINKING}}"
+		open := "{{THINKING}}" + m.thinkingText
+		if strings.HasSuffix(m.messages[lastIdx].Content, open) {
+			m.messages[lastIdx].Content = m.messages[lastIdx].Content[:len(m.messages[lastIdx].Content)-len(open)] + "{{THINKING}}" + m.thinkingText + "{{/THINKING}}"
+		}
+	}
+	m.thinkingText = ""
+}
+
+func (m Model) renderThinkingBlock(text string) string {
+	width := m.width - 12
+	if width < 30 {
+		width = 30
+	}
+
+	bar := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("62")).
+		Render(strings.Repeat("─", width))
+
+	label := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("62")).
+		Bold(true).
+		Render("💭 Thinking")
+
+	body := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("241")).
+		Italic(true).
+		PaddingLeft(1).
+		Width(width).
+		Render(text)
+
+	return bar + "\n" + label + "\n" + body + "\n" + bar
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
+}
+
+// SetAgentName sets the agent name displayed in the header.
+func (m *Model) SetAgentName(name string) {
+	m.agentName = name
+}
+
+func (m Model) displayTitle() string {
+	if m.agentName != "" {
+		return m.agentName
+	}
+	return "ChatBot TUI"
 }
 
 // textareaHeight computes how tall the textarea should be based on content,
