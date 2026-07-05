@@ -41,3 +41,6 @@ ssh_key.pub
 
 # Credentials
 *.xpr
+
+# Project
+tokenizer_corpus.txt
