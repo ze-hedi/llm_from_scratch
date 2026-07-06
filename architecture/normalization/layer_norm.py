@@ -1,5 +1,5 @@
 import torch 
-import troch.nn as nn 
+import torch.nn as nn 
 
 class LayerNorm(nn.Module) : 
     def __init__(self,emb_dim) : 

@@ -1,49 +1,38 @@
 """Evaluate the French BPE tokenizer on compression, roundtrip, and linguistic quality."""
 
-import sentencepiece as spm
+from tokenizers import Tokenizer
 from collections import Counter
-
-MODEL_PATH = "fr_bpe_32k.model"
-
-# French test corpus — mix of registers and edge cases
-FRENCH_CORPUS = [
-    # Formal / legal
-    "L'article 1134 du Code civil dispose que les conventions légalement formées tiennent lieu de loi à ceux qui les ont faites.",
-    "Le tribunal de grande instance de Paris a rendu son jugement le 15 mars 2024.",
-    "Conformément aux dispositions de l'article L. 121-1 du Code de la consommation, tout contrat conclu à distance peut faire l'objet d'une rétractation.",
-    # Literary
-    "Longtemps, je me suis couché de bonne heure. Parfois, à peine ma bougie éteinte, mes yeux se fermaient si vite que je n'avais pas le temps de me dire : « Je m'endors. »",
-    "Il est des parfums frais comme des chairs d'enfants, doux comme les hautbois, verts comme les prairies.",
-    # Colloquial
-    "T'as vu le match hier soir ? C'était vraiment n'importe quoi, l'arbitre a sifflé un penalty complètement bidon.",
-    "J'suis pas sûr qu'on puisse y aller demain, ça dépend de la météo.",
-    # Technical
-    "L'algorithme de rétropropagation calcule le gradient de la fonction de coût par rapport aux poids du réseau de neurones.",
-    "Le protocole TCP/IP assure la transmission fiable des paquets sur le réseau Internet.",
-    # Numbers and special chars
-    "Le PIB de la France en 2023 s'élevait à 2 803,04 milliards d'euros, soit une croissance de 0,9 %.",
-    "Rendez-vous à 14h30 au 42, rue de la République — 3e étage, porte B.",
-    # Accents and diacritics
-    "L'élève a réussi l'épreuve grâce à sa maîtrise des règles de grammaire française.",
-    "Les forêts méditerranéennes abritent une biodiversité considérable, menacée par les incendies récurrents.",
-    # Apostrophes and contractions (French-specific)
-    "Aujourd'hui, l'Assemblée nationale s'est réunie pour débattre de l'avenir de l'économie.",
-    "Quelqu'un d'autre aurait-il pu prévoir qu'il n'y aurait pas d'issue ?",
-    # Rare / morphologically complex words
-    "L'anticonstitutionnellement célèbre mot est souvent cité comme le plus long de la langue française.",
-    "La désindustrialisation progressive des régions septentrionales a entraîné un exode rural sans précédent.",
-    # Mixed content
-    "Version 3.2.1 — changelog : correction du bug #4521, amélioration des performances (+23 %), refactorisation du module d'authentification.",
-    # Whitespace edge cases
-    "  Texte avec   des espaces    multiples  et\ttabulations\t.",
-    "",  # empty string
-]
+from datasets import load_dataset
+import random
+import sys
 
 
-def evaluate(sp: spm.SentencePieceProcessor, corpus: list[str]):
-    vocab_size = sp.get_piece_size()
+def load_eval_corpus(n_sentences=500, seed=42):
+    """Load held-out sentences from nirantk/french-books for evaluation."""
+    random.seed(seed)
+    ds = load_dataset("nirantk/french-books")
+    train = ds["train"]
+
+    # Pick from the last 200 books (held-out from small training corpus)
+    rows = list(range(len(train) - 200, len(train)))
+    random.shuffle(rows)
+
+    sentences = []
+    for idx in rows:
+        text = train[idx]["complete_text"]
+        for paragraph in text.split("\n\n"):
+            for sentence in paragraph.split(". "):
+                s = sentence.strip()
+                if 30 < len(s) < 500:
+                    sentences.append(s)
+                if len(sentences) >= n_sentences:
+                    return sentences
+    return sentences
+
+
+def evaluate(tok: Tokenizer, corpus: list[str]):
+    vocab_size = tok.get_vocab_size()
     print(f"Vocab size: {vocab_size:,}")
-    print(f"Special tokens — BOS: {sp.bos_id()}, EOS: {sp.eos_id()}, UNK: {sp.unk_id()}")
     print()
 
     total_chars = 0
@@ -51,7 +40,6 @@ def evaluate(sp: spm.SentencePieceProcessor, corpus: list[str]):
     total_words = 0
     total_bytes = 0
     roundtrip_failures = []
-    unk_count = 0
     char_fallback_count = 0
     token_freq = Counter()
     all_tokens_str = []
@@ -60,9 +48,10 @@ def evaluate(sp: spm.SentencePieceProcessor, corpus: list[str]):
         if not text:
             continue
 
-        ids = sp.encode(text, out_type=int)
-        pieces = sp.encode(text, out_type=str)
-        decoded = sp.decode(ids)
+        encoding = tok.encode(text)
+        ids = encoding.ids
+        pieces = encoding.tokens
+        decoded = tok.decode(ids)
 
         total_chars += len(text)
         total_bytes += len(text.encode("utf-8"))
@@ -71,8 +60,7 @@ def evaluate(sp: spm.SentencePieceProcessor, corpus: list[str]):
         token_freq.update(ids)
         all_tokens_str.extend(pieces)
 
-        unk_count += ids.count(sp.unk_id())
-        char_fallback_count += sum(1 for p in pieces if len(p.replace("▁", "")) <= 1 and p != "▁")
+        char_fallback_count += sum(1 for p in pieces if len(p) <= 1)
 
         if decoded != text:
             roundtrip_failures.append((text, decoded))
@@ -109,7 +97,6 @@ def evaluate(sp: spm.SentencePieceProcessor, corpus: list[str]):
     print("=" * 60)
     print("COVERAGE")
     print("=" * 60)
-    print(f"  UNK tokens:                 {unk_count}/{total_tokens} ({unk_count/total_tokens:.4%})")
     print(f"  Single-char fallbacks:      {char_fallback_count}/{total_tokens} ({char_fallback_count/total_tokens:.2%})")
     print(f"  Unique tokens used:         {len(token_freq):,}/{vocab_size:,} ({len(token_freq)/vocab_size:.1%})")
     print()
@@ -118,7 +105,7 @@ def evaluate(sp: spm.SentencePieceProcessor, corpus: list[str]):
     print("=" * 60)
     print("TOKEN LENGTH DISTRIBUTION (by characters)")
     print("=" * 60)
-    lengths = [len(p.replace("▁", "")) for p in all_tokens_str if p != "▁"]
+    lengths = [len(p) for p in all_tokens_str if p.strip()]
     length_counts = Counter(lengths)
     for length in sorted(length_counts):
         bar = "█" * min(length_counts[length], 60)
@@ -130,7 +117,7 @@ def evaluate(sp: spm.SentencePieceProcessor, corpus: list[str]):
     print("TOP 20 MOST FREQUENT TOKENS")
     print("=" * 60)
     for tid, count in token_freq.most_common(20):
-        piece = sp.id_to_piece(tid)
+        piece = tok.id_to_token(tid)
         print(f"  {piece!r:20s}  (id={tid:5d})  count={count}")
     print()
 
@@ -150,7 +137,7 @@ def evaluate(sp: spm.SentencePieceProcessor, corpus: list[str]):
         "authentification",
     ]
     for word in spot_checks:
-        pieces = sp.encode(word, out_type=str)
+        pieces = tok.encode(word).tokens
         print(f"  {word:30s} → {pieces}")
     print()
 
@@ -168,7 +155,7 @@ def evaluate(sp: spm.SentencePieceProcessor, corpus: list[str]):
         "c'est-à-dire",
     ]
     for phrase in apostrophe_tests:
-        pieces = sp.encode(phrase, out_type=str)
+        pieces = tok.encode(phrase).tokens
         print(f"  {phrase:25s} → {pieces}")
     print()
 
@@ -187,11 +174,17 @@ def evaluate(sp: spm.SentencePieceProcessor, corpus: list[str]):
         "+23 %",
     ]
     for num in number_tests:
-        pieces = sp.encode(num, out_type=str)
+        pieces = tok.encode(num).tokens
         print(f"  {num:20s} → {pieces}")
     print()
 
 
 if __name__ == "__main__":
-    sp = spm.SentencePieceProcessor(model_file=MODEL_PATH)
-    evaluate(sp, FRENCH_CORPUS)
+    if len(sys.argv) != 2:
+        print(f"Usage: python {sys.argv[0]} <tokenizer.json>")
+        sys.exit(1)
+    tok = Tokenizer.from_file(sys.argv[1])
+    print("Loading evaluation corpus from nirantk/french-books...")
+    corpus = load_eval_corpus()
+    print(f"Loaded {len(corpus)} sentences\n")
+    evaluate(tok, corpus)
