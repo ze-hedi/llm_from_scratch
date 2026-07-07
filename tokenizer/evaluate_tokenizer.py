@@ -3,6 +3,7 @@
 from tokenizers import Tokenizer
 from collections import Counter
 from datasets import load_dataset
+import tiktoken
 import random
 import sys
 
@@ -30,7 +31,36 @@ def load_eval_corpus(n_sentences=500, seed=42):
     return sentences
 
 
-def evaluate(tok: Tokenizer, corpus: list[str]):
+class TiktokenWrapper:
+    """Wraps a tiktoken encoder to match the tokenizers.Tokenizer interface used by evaluate()."""
+
+    def __init__(self, encoding: tiktoken.Encoding):
+        self._enc = encoding
+
+    def get_vocab_size(self):
+        return self._enc.n_vocab
+
+    def encode(self, text: str):
+        ids = self._enc.encode(text, allowed_special="all")
+        pieces = [self._enc.decode([i]) for i in ids]
+        return _EncodingResult(ids, pieces)
+
+    def decode(self, ids: list[int]) -> str:
+        return self._enc.decode(ids)
+
+    def id_to_token(self, tid: int) -> str:
+        return self._enc.decode([tid])
+
+
+class _EncodingResult:
+    """Minimal stand-in for tokenizers.Encoding."""
+
+    def __init__(self, ids: list[int], tokens: list[str]):
+        self.ids = ids
+        self.tokens = tokens
+
+
+def evaluate(tok, corpus: list[str]):
     vocab_size = tok.get_vocab_size()
     print(f"Vocab size: {vocab_size:,}")
     print()
@@ -183,8 +213,24 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         print(f"Usage: python {sys.argv[0]} <tokenizer.json>")
         sys.exit(1)
-    tok = Tokenizer.from_file(sys.argv[1])
+
     print("Loading evaluation corpus from nirantk/french-books...")
     corpus = load_eval_corpus()
     print(f"Loaded {len(corpus)} sentences\n")
+
+    # --- Your tokenizer ---
+    print("#" * 60)
+    print("# YOUR TOKENIZER")
+    print("#" * 60)
+    print()
+    tok = Tokenizer.from_file(sys.argv[1])
     evaluate(tok, corpus)
+
+    # --- GPT-2 benchmark ---
+    print("#" * 60)
+    print("# BENCHMARK: GPT-2 (tiktoken)")
+    print("#" * 60)
+    print()
+    gpt2_enc = tiktoken.get_encoding("gpt2")
+    gpt2_tok = TiktokenWrapper(gpt2_enc)
+    evaluate(gpt2_tok, corpus)
