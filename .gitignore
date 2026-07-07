@@ -44,3 +44,4 @@ ssh_key.pub
 
 # Project
 tokenizer_corpus.txt
+*.txt
