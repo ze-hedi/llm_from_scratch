@@ -1,9 +1,0 @@
-{                                                                                                                                                                                
-        "session": "benders-config",
-        "layout": "even-horizontal",                                                                                                                                                   
-        "panes": [                                                                                                                                                                     
-        { "path": "/home/bouchehdahed/code/antares-xpansion" },
-        { "path": "/home/bouchehdahed/code/Julia_benders_micro_iterations"},     
-        {"path": "/home/bouchehdahed/studies/clean_big_study/10-14_500"} 
-    ]     
-}
