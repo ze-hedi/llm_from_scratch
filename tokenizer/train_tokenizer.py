@@ -75,7 +75,7 @@ class TokenizerTrainer:
 
 
 if __name__ == "__main__":
-    FRENCH_PATTERN = r"""[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+(?:['\u2019][\p{L}\p{M}]+)*|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"""
+    FRENCH_PATTERN = r"""[^\r\n\p{L}\p{N}]?\p{L}+'?|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"""
 
     corpus_file = "tokenizer_training_set/tokenizer_training_corpus_small.txt"
     size_mb = os.path.getsize(corpus_file) / (1024 ** 2)
