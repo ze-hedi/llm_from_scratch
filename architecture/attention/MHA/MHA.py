@@ -5,18 +5,20 @@ from torch.nn.attention import sdpa_kernel, SDPBackend
 
 
 
-class CausalAttention(nn.Module) : 
-    def __init__(self,d_in:int,d_out:int, context_length:int, dropout:float, qkv_bias:bool=False) : 
-        super().__init__() 
-        self.d_out = d_out 
+class CausalAttention(nn.Module) :
+    def __init__(self,d_in:int,d_out:int, context_length:int, dropout:float, qkv_bias:bool=False, compile:bool=False) :
+        super().__init__()
+        self.d_out = d_out
         self.W_query = nn.Linear(d_in,d_out,bias=qkv_bias)
         self.W_key = nn.Linear(d_in,d_out,bias=qkv_bias)
         self.W_value = nn.Linear(d_in,d_out,bias=qkv_bias)
-        self.dropout = nn.Dropout(dropout) 
+        self.dropout = nn.Dropout(dropout)
         self.register_buffer(
-            'mask', 
+            'mask',
             torch.triu(torch.ones(context_length,context_length),diagonal=1)
         )
+        if compile:
+            self.forward = torch.compile(self.forward)
 
     def forward(self,x) : 
         b, num_tokens, d_in = x.shape 
@@ -35,8 +37,8 @@ class CausalAttention(nn.Module) :
         context_vec = attn_weights @ values 
         return context_vec 
 
-class MHA_wrapper(nn.Module) : 
-    def __init__(self, d_in, d_out,context_length, dropout,n_heads, qkv_bias=False)  :
+class MHA_wrapper(nn.Module) :
+    def __init__(self, d_in, d_out,context_length, dropout,n_heads, qkv_bias=False, compile:bool=False)  :
         assert d_out % n_heads == 0, "d_out must be divisle by num_heads"
         super().__init__()
         hidden_head_size = d_out // n_heads
@@ -44,6 +46,8 @@ class MHA_wrapper(nn.Module) :
             [CausalAttention(d_in, hidden_head_size, context_length, dropout, qkv_bias) for _ in range(n_heads)]
         )
         self.out_proj = nn.Linear(d_in, d_out)
+        if compile:
+            self.forward = torch.compile(self.forward)
 
     def forward(self,x) : 
         MHA = torch.cat([head(x) for head in self.heads],dim=-1)
@@ -52,13 +56,13 @@ class MHA_wrapper(nn.Module) :
 
 
 
-class MultiHeadAttention(nn.Module) : 
-    def __init__(self,d_in,d_out,context_length,dropout, num_heads, qkv_bias=False) : 
-        super().__init__() 
+class MultiHeadAttention(nn.Module) :
+    def __init__(self,d_in,d_out,context_length,dropout, num_heads, qkv_bias=False, compile:bool=False) :
+        super().__init__()
         assert d_out % num_heads == 0, "d_out must be a divisible by num heads "
-        self.d_out = d_out 
-        self.num_heads = num_heads 
-        self.head_dim = d_out // num_heads 
+        self.d_out = d_out
+        self.num_heads = num_heads
+        self.head_dim = d_out // num_heads
 
         self.W_query = nn.Linear(d_in, d_out, bias= qkv_bias)
         self.W_value = nn.Linear(d_in, d_out, bias= qkv_bias)
@@ -66,6 +70,8 @@ class MultiHeadAttention(nn.Module) :
         self.out_proj = nn.Linear(d_out,d_out,bias = qkv_bias)
         self.dropout = nn.Dropout(dropout)
         self.register_buffer("mask",torch.triu(torch.ones(context_length,context_length), diagonal=1))
+        if compile:
+            self.forward = torch.compile(self.forward)
 
     def forward(self,x) : 
         b, num_tokens, d_in = x.shape 
@@ -99,7 +105,7 @@ class MultiHeadAttention(nn.Module) :
         return context_vec 
 
 class MHAFlashAttention(nn.Module):
-    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False):
+    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False, compile:bool=False):
         super().__init__()
         assert d_out % num_heads == 0, "d_out must be divisible by num heads"
         self.d_out = d_out
@@ -111,6 +117,8 @@ class MHAFlashAttention(nn.Module):
         self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.out_proj = nn.Linear(d_out, d_out, bias=qkv_bias)
         self.dropout_p = dropout
+        if compile:
+            self.forward = torch.compile(self.forward)
 
     def forward(self, x):
         b, num_tokens, d_in = x.shape
@@ -131,7 +139,7 @@ class MHAFlashAttention(nn.Module):
 
 
 class MHAEfficientAttention(nn.Module):
-    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False):
+    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False, compile:bool=False):
         super().__init__()
         assert d_out % num_heads == 0, "d_out must be divisible by num heads"
         self.d_out = d_out
@@ -143,6 +151,8 @@ class MHAEfficientAttention(nn.Module):
         self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.out_proj = nn.Linear(d_out, d_out, bias=qkv_bias)
         self.dropout_p = dropout
+        if compile:
+            self.forward = torch.compile(self.forward)
 
     def forward(self, x):
         b, num_tokens, d_in = x.shape
@@ -163,7 +173,7 @@ class MHAEfficientAttention(nn.Module):
 
 
 class MHAMathAttention(nn.Module):
-    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False):
+    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False, compile:bool=False):
         super().__init__()
         assert d_out % num_heads == 0, "d_out must be divisible by num heads"
         self.d_out = d_out
@@ -175,6 +185,8 @@ class MHAMathAttention(nn.Module):
         self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.out_proj = nn.Linear(d_out, d_out, bias=qkv_bias)
         self.dropout_p = dropout
+        if compile:
+            self.forward = torch.compile(self.forward)
 
     def forward(self, x):
         b, num_tokens, d_in = x.shape

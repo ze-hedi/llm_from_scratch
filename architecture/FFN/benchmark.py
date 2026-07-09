@@ -1,47 +1,41 @@
-import time
-import torch
-import matplotlib.pyplot as plt
-from architecture.attention.MHA.MHA import (
-    MHA_wrapper,
-    MultiHeadAttention,
-    MHAFlashAttention,
-    MHAEfficientAttention,
-    MHAMathAttention,
+import time 
+import torch 
+import matplotlib.pyplot as plt 
+from architecture.FFN.feed_forward import (
+    FeedForward ,
+    FeedForward_torch
 )
 
 d_in = 768
-d_out = 768
-context_length = 1024
+d_ff = 4*d_in 
+d_out = 768 
+
+context_length = 1024 
 dropout = 0.0
-num_heads = 12
-batch_size = 4
-seq_len = 512
+batch_size = 5
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+cfg = {
+    "emb_dim" : d_in, 
+}
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
 models = {
-    "MHA_wrapper": MHA_wrapper(d_in, d_out, context_length, dropout, num_heads),
-    "MHA_wrapper (compiled)": MHA_wrapper(d_in, d_out, context_length, dropout, num_heads, compile=True),
-    "MultiHeadAttention": MultiHeadAttention(d_in, d_out, context_length, dropout, num_heads),
-    "MultiHeadAttention (compiled)": MultiHeadAttention(d_in, d_out, context_length, dropout, num_heads, compile=True),
-    "FlashAttention": MHAFlashAttention(d_in, d_out, context_length, dropout, num_heads),
-    "FlashAttention (compiled)": MHAFlashAttention(d_in, d_out, context_length, dropout, num_heads, compile=True),
-    "EfficientAttention": MHAEfficientAttention(d_in, d_out, context_length, dropout, num_heads),
-    "EfficientAttention (compiled)": MHAEfficientAttention(d_in, d_out, context_length, dropout, num_heads, compile=True),
-    "MathAttention": MHAMathAttention(d_in, d_out, context_length, dropout, num_heads),
-    "MathAttention (compiled)": MHAMathAttention(d_in, d_out, context_length, dropout, num_heads, compile=True),
+    "FeedForward" : FeedForward(cfg,d_ff) , 
+    "FeedForward (compiled)" : FeedForward(cfg,d_ff,True) , 
+    "FeedForward_torch" : FeedForward_torch(cfg,d_ff),
+    "FeedForward_torch (compiled)" : FeedForward_torch(cfg,d_ff,True)
 }
 
 dtype = torch.float16 if device.type == "cuda" else torch.float32
-x = torch.randn(batch_size, seq_len, d_in, device=device, dtype=dtype)
+x = torch.randn(batch_size, context_length, d_in, device=device, dtype=dtype)
 
-num_runs = 15
+num_runs = 30
 results = {}
 
 for name, model in models.items():
     model = model.to(device=device, dtype=dtype).eval()
 
-    # warmup for CUDA
     if device.type == "cuda":
         with torch.no_grad():
             model(x)
@@ -68,12 +62,10 @@ for name, model in models.items():
 ## Forward plot
 names = list(results.keys())
 fwd_times = list(results.values())
+
 colors = [
     "#4c72b0", "#2e4a7a",
     "#55a868", "#367a45",
-    "#c44e52", "#8b2e31",
-    "#8172b2", "#5a4e8a",
-    "#ccb974", "#a89450",
 ]
 
 plt.figure(figsize=(14, 6))
@@ -97,20 +89,17 @@ for name, model in models.items():
 
     # warmup
     if device.type == "cuda":
-        x_warm = torch.randn_like(x, requires_grad=True)
-        out = model(x_warm)
+        out = model(x)
         out.sum().backward()
         torch.cuda.synchronize()
 
     times = []
     for _ in range(num_runs):
-        x_run = torch.randn_like(x, requires_grad=True)
-
         if device.type == "cuda":
             torch.cuda.synchronize()
 
         start = time.perf_counter()
-        out = model(x_run)
+        out = model(x)
         out.sum().backward()
 
         if device.type == "cuda":
@@ -136,3 +125,4 @@ plt.xticks(rotation=30, ha="right")
 plt.tight_layout()
 plt.savefig("benchmark_forward_backward.png", dpi=150)
 plt.show()
+
