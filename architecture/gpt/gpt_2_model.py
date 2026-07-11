@@ -1,7 +1,7 @@
 import torch 
 import torch.nn as nn 
 
-from architecture.gpt_transformer_block import GPTTransformerBlock
+from architecture.gpt.gpt_transformer_block import GPTTransformerBlock
 from architecture.normalization.layer_norm import LayerNorm
 from tokenizers import Tokenizer
 

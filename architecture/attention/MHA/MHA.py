@@ -71,6 +71,7 @@ class MultiHeadAttention(nn.Module) :
         self.dropout = nn.Dropout(dropout)
         self.register_buffer("mask",torch.triu(torch.ones(context_length,context_length), diagonal=1))
         if compile:
+            print("mha implementation is compiled ")
             self.forward = torch.compile(self.forward)
 
     def forward(self,x) : 
@@ -154,8 +155,8 @@ class MHAFlashAttention(nn.Module):
         keys = self.W_key(x).view(b, num_tokens, self.num_heads, self.head_dim).transpose(1, 2)
         values = self.W_value(x).view(b, num_tokens, self.num_heads, self.head_dim).transpose(1, 2)
 
-        queries = apply_rope(queries, self.rope_cos, self.rope_sin)
-        keys = apply_rope(keys, self.rope_cos, self.rope_sin)
+        # queries = apply_rope(queries, self.rope_cos, self.rope_sin)
+        # keys = apply_rope(keys, self.rope_cos, self.rope_sin)
 
         with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
             context_vec = F.scaled_dot_product_attention(
