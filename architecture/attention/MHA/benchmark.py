@@ -6,40 +6,42 @@ from architecture.attention.MHA.MHA import (
     MultiHeadAttention,
     MHAFlashAttention,
     MHAEfficientAttention,
-    MHAMathAttention,
 )
 
-d_in = 768
-d_out = 768
-context_length = 1024
-dropout = 0.0
-num_heads = 12
-batch_size = 4
-seq_len = 512
-
+batch_size    = 8
+seq_len = context_length    = 2048
+d_in = d_out  = 1024
+num_heads     = 16
+num_kv_groups = 4
+dtype         = torch.float16
+dropout       = 0.0
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-models = {
-    "MHA_wrapper": MHA_wrapper(d_in, d_out, context_length, dropout, num_heads),
-    "MHA_wrapper (compiled)": MHA_wrapper(d_in, d_out, context_length, dropout, num_heads, compile=True),
-    "MultiHeadAttention": MultiHeadAttention(d_in, d_out, context_length, dropout, num_heads),
-    "MultiHeadAttention (compiled)": MultiHeadAttention(d_in, d_out, context_length, dropout, num_heads, compile=True),
-    "FlashAttention": MHAFlashAttention(d_in, d_out, context_length, dropout, num_heads),
-    "FlashAttention (compiled)": MHAFlashAttention(d_in, d_out, context_length, dropout, num_heads, compile=True),
-    "EfficientAttention": MHAEfficientAttention(d_in, d_out, context_length, dropout, num_heads),
-    "EfficientAttention (compiled)": MHAEfficientAttention(d_in, d_out, context_length, dropout, num_heads, compile=True),
-    "MathAttention": MHAMathAttention(d_in, d_out, context_length, dropout, num_heads),
-    "MathAttention (compiled)": MHAMathAttention(d_in, d_out, context_length, dropout, num_heads, compile=True),
+model_factories = {
+    "MHA_wrapper": lambda: MHA_wrapper(d_in, d_out, context_length, dropout, num_heads),
+    "MHA_wrapper (compiled)": lambda: MHA_wrapper(d_in, d_out, context_length, dropout, num_heads, compile=True),
+    "MultiHeadAttention": lambda: MultiHeadAttention(d_in, d_out, context_length, dropout, num_heads),
+    "MultiHeadAttention (compiled)": lambda: MultiHeadAttention(d_in, d_out, context_length, dropout, num_heads, compile=True),
+    "FlashAttention": lambda: MHAFlashAttention(d_in, d_out, context_length, dropout, num_heads),
+    "FlashAttention (compiled)": lambda: MHAFlashAttention(d_in, d_out, context_length, dropout, num_heads, compile=True),
+    "EfficientAttention": lambda: MHAEfficientAttention(d_in, d_out, context_length, dropout, num_heads),
+    "EfficientAttention (compiled)": lambda: MHAEfficientAttention(d_in, d_out, context_length, dropout, num_heads, compile=True),
 }
 
-dtype = torch.float16 if device.type == "cuda" else torch.float32
 x = torch.randn(batch_size, seq_len, d_in, device=device, dtype=dtype)
 
-num_runs = 15
+num_runs = 100
 results = {}
 
-for name, model in models.items():
-    model = model.to(device=device, dtype=dtype).eval()
+print("\n--- Forward  ---")
+
+
+## Forward benchmark
+for name, factory in model_factories.items():
+    model = factory().to(device=device, dtype=dtype).eval()
+    if device.type == "cuda":
+        free, total = torch.cuda.mem_get_info()
+        print(f"[{name}] after init — Free: {free / 1e9:.2f} GB / Total: {total / 1e9:.2f} GB")
 
     # warmup for CUDA
     if device.type == "cuda":
@@ -64,6 +66,11 @@ for name, model in models.items():
     avg_ms = sum(times) / num_runs
     results[name] = avg_ms
     print(f"{name}: {avg_ms:.2f} ms (avg over {num_runs} runs)")
+    del model
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+        free, total = torch.cuda.mem_get_info()
+        print(f"[{name}] after delete — Free: {free / 1e9:.2f} GB / Total: {total / 1e9:.2f} GB")
 
 ## Forward plot
 names = list(results.keys())
@@ -73,7 +80,6 @@ colors = [
     "#55a868", "#367a45",
     "#c44e52", "#8b2e31",
     "#8172b2", "#5a4e8a",
-    "#ccb974", "#a89450",
 ]
 
 plt.figure(figsize=(14, 6))
@@ -92,8 +98,11 @@ plt.show()
 print("\n--- Forward + Backward ---")
 results_fwd_bwd = {}
 
-for name, model in models.items():
-    model = model.to(device=device, dtype=dtype).train()
+for name, factory in model_factories.items():
+    model = factory().to(device=device, dtype=dtype).train()
+    if device.type == "cuda":
+        free, total = torch.cuda.mem_get_info()
+        print(f"[{name}] after init — Free: {free / 1e9:.2f} GB / Total: {total / 1e9:.2f} GB")
 
     # warmup
     if device.type == "cuda":
@@ -121,6 +130,11 @@ for name, model in models.items():
     avg_ms = sum(times) / num_runs
     results_fwd_bwd[name] = avg_ms
     print(f"{name}: {avg_ms:.2f} ms (avg over {num_runs} runs)")
+    del model
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+        free, total = torch.cuda.mem_get_info()
+        print(f"[{name}] after delete — Free: {free / 1e9:.2f} GB / Total: {total / 1e9:.2f} GB")
 
 ## Forward + Backward plot
 fwd_bwd_times = list(results_fwd_bwd.values())

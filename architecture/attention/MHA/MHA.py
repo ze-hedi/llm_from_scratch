@@ -105,27 +105,6 @@ class MultiHeadAttention(nn.Module) :
 
         return context_vec 
 
-def precompute_rope_freqs(head_dim, max_seq_len, theta=10000.0):
-    freqs = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
-    positions = torch.arange(max_seq_len).float()
-    angles = torch.outer(positions, freqs)
-    cos = angles.cos()
-    sin = angles.sin()
-    return cos, sin
-
-
-def apply_rope(x, cos, sin):
-    # x shape: (batch, num_heads, seq_len, head_dim)
-    seq_len = x.shape[2]
-    cos = cos[:seq_len].unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len, head_dim//2)
-    sin = sin[:seq_len].unsqueeze(0).unsqueeze(0)
-
-    x1 = x[..., ::2]   # even indices
-    x2 = x[..., 1::2]  # odd indices
-
-    rotated = torch.stack((x1 * cos - x2 * sin, x1 * sin + x2 * cos), dim=-1)
-    return rotated.flatten(-2)
-
 
 class MHAFlashAttention(nn.Module):
     def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False, compile:bool=False):
@@ -140,10 +119,6 @@ class MHAFlashAttention(nn.Module):
         self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
         self.out_proj = nn.Linear(d_out, d_out, bias=qkv_bias)
         self.dropout_p = dropout
-
-        cos, sin = precompute_rope_freqs(self.head_dim, context_length)
-        self.register_buffer("rope_cos", cos)
-        self.register_buffer("rope_sin", sin)
 
         if compile:
             self.forward = torch.compile(self.forward)

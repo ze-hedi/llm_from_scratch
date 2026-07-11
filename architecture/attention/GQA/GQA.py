@@ -3,8 +3,32 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention import sdpa_kernel, SDPBackend
 
+
+def precompute_rope_freqs(head_dim, max_seq_len, theta=10000.0):
+    freqs = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
+    positions = torch.arange(max_seq_len).float()
+    angles = torch.outer(positions, freqs)
+    cos = angles.cos()
+    sin = angles.sin()
+    return cos, sin
+
+
+def apply_rope(x, cos, sin):
+    # x shape: (batch, num_heads, seq_len, head_dim)
+    seq_len = x.shape[2]
+    cos = cos[:seq_len].unsqueeze(0).unsqueeze(0).to(x.dtype)  # (1, 1, seq_len, head_dim//2)
+    sin = sin[:seq_len].unsqueeze(0).unsqueeze(0).to(x.dtype)
+
+    x1 = x[..., ::2]   # even indices
+    x2 = x[..., 1::2]  # odd indices
+
+    rotated = torch.stack((x1 * cos - x2 * sin, x1 * sin + x2 * cos), dim=-1)
+    return rotated.flatten(-2)
+
+
+
 class GroupedQueryAttention(nn.Module) : 
-    def __init__(self,d_in,d_out, dropout,num_heads,num_kv_groups, dtype=torch.float16, qkv_bias=False): 
+    def __init__(self,d_in,d_out, dropout,num_heads,num_kv_groups, dtype=torch.float16, qkv_bias=False,context_window=4096): 
 
         super().__init__() 
 
@@ -61,7 +85,7 @@ class GroupedQueryAttention(nn.Module) :
     
 
 class GQAFlashAttention(nn.Module) :
-    def __init__(self,d_in,d_out, dropout,num_heads,num_kv_groups, dtype=torch.float16, qkv_bias=False, compile:bool=False):
+    def __init__(self,d_in,d_out, dropout,num_heads,num_kv_groups, dtype=torch.float16, qkv_bias=False, compile:bool=False, context_window=4096):
 
         super().__init__()
 
@@ -79,6 +103,11 @@ class GQAFlashAttention(nn.Module) :
         self.W_query = nn.Linear(d_in,d_out,bias=qkv_bias,dtype=dtype)
         self.W_out_proj = nn.Linear(d_out,d_out,bias=qkv_bias,dtype=dtype)
 
+        cos, sin = precompute_rope_freqs(self.head_dim, context_window)
+        self.register_buffer("rope_cos", cos)
+        self.register_buffer("rope_sin", sin)
+
+
         if compile:
             self.forward = torch.compile(self.forward)
 
@@ -88,6 +117,10 @@ class GQAFlashAttention(nn.Module) :
         q = self.W_query(x).view(b, num_tokens, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.W_key(x).view(b, num_tokens, self.num_kv_groups, self.head_dim).transpose(1, 2)
         v = self.W_value(x).view(b, num_tokens, self.num_kv_groups, self.head_dim).transpose(1, 2)
+        
+        q = apply_rope(q, self.rope_cos, self.rope_sin)
+        k = apply_rope(k, self.rope_cos, self.rope_sin)
+
 
         with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
             context = F.scaled_dot_product_attention(
