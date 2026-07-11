@@ -85,7 +85,7 @@ class GroupedQueryAttention(nn.Module) :
     
 
 class GQAFlashAttention(nn.Module) :
-    def __init__(self,d_in,d_out, dropout,num_heads,num_kv_groups, dtype=torch.float16, qkv_bias=False, compile:bool=False, context_window=4096):
+    def __init__(self,d_in,d_out, dropout,num_heads,num_kv_groups, dtype=torch.float16, qkv_bias=False, compile:bool=True, context_window=4096):
 
         super().__init__()
 
