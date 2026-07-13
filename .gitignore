@@ -46,4 +46,6 @@ ssh_key.pub
 tokenizer_corpus.txt
 *.txt
 
+*.npy
+
 wikipedia

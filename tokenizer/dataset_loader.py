@@ -47,6 +47,6 @@ def all_docs():
 
 
 if __name__ == "__main__":
-    data_set = FrenchDataset("wikimedia/wikipedia", text_col="text", name="20231101.fr")
+    data_set = FrenchDataset("nirantk/french-books", text_col="complete_text")
     data_set.info() 
     data_set.preview()
