@@ -1,6 +1,7 @@
 from tokenizers import Tokenizer 
 from typing import List, Dict, Tuple
 from datasets import load_dataset
+from pathlib import Path 
 import numpy as np 
 
 class DataLoader : 
@@ -29,12 +30,18 @@ class DataLoader :
 
 ## this class is used to read directly HF datasets
 class DataLoaderHF : 
-    def __init__(self,tokenizer_file:str,hf_data_sets:List[Tuple], context_size=1024,Tokenize=False) : 
+    def __init__(self,tokenizer_file:str,hf_data_sets:List[Tuple],
+                 context_size:int=1024,Tokenize:bool=False, 
+                ) : 
+
         self.tokenizer = Tokenizer.from_file(tokenizer_file) 
         self.training_tokens = [] 
         self.target_tokens = []
         self.datasets = []
         self.context_size = context_size
+        self.hf_data_sets = hf_data_sets
+
+        Path("./training/training_tokens/").mkdir(parents=True, exist_ok=True)
 
         if Tokenize : 
             for dataset_tuple in hf_data_sets :
@@ -45,24 +52,26 @@ class DataLoaderHF :
 
 
 
-    def tokenize_datasets(self ) : 
+    def tokenize_datasets(self,parquet_num = None) : 
         total_tokens = 0
-        for dataset in self.datasets : 
-            print(f"tokenizing  : {dataset[0]}")
+        for i in range(len(self.datasets)) : 
+            print(f"tokenizing  : {self.datasets[i][0]}")
             tokens_per_data_set = []            
-            for i in range(dataset[1]['train'].num_rows) :
-                print(f"tokenizing file num {i}")
+            for j in range(self.datasets[i][1]['train'].num_rows) :
+                print(f"tokenizing file num {j}")
                 encoding = None
-                encoding = self.tokenizer.encode(dataset[1]['train'][i][dataset[2]]) 
+                encoding = self.tokenizer.encode(self.datasets[i][1]['train'][j][self.datasets[i][2]]) 
                 tokens_per_data_set.extend(encoding.ids)
                 tokens_per_data_set.extend([1])
                 total_tokens += len(encoding.ids)
-            name = dataset[0].replace("/","_")
+            name = self.datasets[i][0].replace("/","_")
+            has_parquet = self.hf_data_sets[i][1].get("data_files",None)
+            if has_parquet is not None : 
+                name = "./training/training_tokens/" f"{name}_{parquet_num}"
             print(f"total tokens : {len(tokens_per_data_set)}")
-            np.save(f"{name}_tokens",np.array(tokens_per_data_set))
+            np.save(name,np.array(tokens_per_data_set))
 
     def build_data_loader(self,npy_files:List[str]) :
-
         tokenized_corpus = []
         for npy_file in npy_files : 
             print(f"loading {npy_file}")
@@ -87,23 +96,9 @@ class DataLoaderHF :
  
 if __name__ == "__main__" :     
     tokenizer_file = "./fr_bpe_32k_422.json" 
-    # hf_data_sets_tuples = [("manu/french_poetry",{},"text"),("Volko76/french-classic-books",{},"text"), 
-    #                        ("nirantk/french-books",{},"complete_text")]
-
-    # hf_data_sets_tuples = [("wikimedia/wikipedia",{"name":"20231101.fr"},"text")]
-    # data_files = [f"gallica_presse_{i}.parquet" for i in [29, 7, 71, 63, 58, 36]]            
-    data_files = [f"gallica_presse_{i}.parquet" for i in [29]]            
-
-    news_paper_data_set = load_dataset("PleIAs/French-PD-Newspapers", data_files=data_files, split="train")  
-    print(news_paper_data_set)
-    # hf_data_loader = DataLoaderHF(tokenizer_file,hf_data_sets_tuples,Tokenize=True)
-
-    # print("start tokenization of the data set ") 
-    # hf_data_loader.tokenize_datasets()
     
-    # npy_files = ["manu_french_poetry_tokens.npy", "nirantk_french-books_tokens.npy",
-    #             "Volko76_french-classic-books_tokens.npy"]
-
-    # training_tokens, target_tokens = hf_data_loader.build_data_loader(npy_files)  
-
-
+    for i in [29, 7, 71, 63, 58, 36] : 
+        hf_data_sets_tuples = [("PleIAs/French-PD-Newspapers",{"data_files":f"gallica_presse_{i}.parquet"},"complete_text")]
+    
+        data_loader_hf = DataLoaderHF(tokenizer_file,hf_data_sets_tuples,Tokenize=True) 
+        data_loader_hf.tokenize_datasets(i)
