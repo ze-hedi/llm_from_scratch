@@ -11,7 +11,7 @@ class LlamaTransformerBlock(nn.Module) :
         self.d_model = cfg["d_model"]
         self.dropout = cfg.get("dropout",0)
         self.num_heads = cfg["num_heads"] 
-        self.num_kv_groups = cfg["num_kv_groups"]
+        self.num_kv_groups = cfg["num_kv_heads"]
         self.dtype = cfg.get("dtype",torch.float16)
         self.context_windows = cfg.get("context_window",2048)
 

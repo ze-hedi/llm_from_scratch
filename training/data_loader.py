@@ -30,13 +30,13 @@ class DataLoader :
 
 ## this class is used to read directly HF datasets
 class DataLoaderHF : 
-    def __init__(self,tokenizer_file:str,hf_data_sets:List[Tuple],
+    def __init__(self,tokenizer_file:str,hf_data_sets:List[Tuple]=None,
                  context_size:int=1024,Tokenize:bool=False, 
                 ) : 
 
         self.tokenizer = Tokenizer.from_file(tokenizer_file) 
-        self.training_tokens = [] 
-        self.target_tokens = []
+        self.training_tokens = None
+        self.target_tokens = None
         self.datasets = []
         self.context_size = context_size
         self.hf_data_sets = hf_data_sets
@@ -72,21 +72,41 @@ class DataLoaderHF :
             np.save(name,np.array(tokens_per_data_set))
 
     def build_data_loader(self,npy_files:List[str]) :
-        tokenized_corpus = []
-        for npy_file in npy_files : 
-            print(f"loading {npy_file}")
-            tokenized_dataset = np.load(npy_file, allow_pickle=True)
-            print(f"num tokens : {tokenized_dataset.size}")
-            tokenized_corpus.extend(tokenized_dataset.tolist()) 
-            print(f"ended loading {npy_file}")
-        
-        print(f"total tokens number : {len(tokenized_corpus)}")
-        for i in range(0,len(tokenized_corpus)-self.context_size, self.context_size) : 
-            self.training_tokens.append(tokenized_corpus[i:i+self.context_size]) 
-            self.target_tokens.append(tokenized_corpus[i+1:i+self.context_size+1]) 
-        return self.training_tokens, self.target_tokens 
+        total_size = 0
+        for npy_file in npy_files :
+            header = np.load(npy_file, mmap_mode='r')
+            total_size += header.size
+            del header
+        print(f"total tokens number : {total_size:,}")
 
-        
+        tokenized_corpus = np.empty(total_size, dtype=np.int64)
+        offset = 0
+        for npy_file in npy_files :
+            print(f"loading {npy_file}")
+            mmap = np.load(npy_file, mmap_mode='r')
+            tokenized_corpus[offset:offset + mmap.size] = mmap
+            offset += mmap.size
+            del mmap
+            print(f"ended loading {npy_file}")
+
+        num_sequences = (tokenized_corpus.size - 1) // self.context_size
+        trim = num_sequences * self.context_size
+        self.training_tokens = tokenized_corpus[:trim].reshape(num_sequences, self.context_size)
+        self.target_tokens = tokenized_corpus[1:trim + 1].reshape(num_sequences, self.context_size)
+
+        print(f"{num_sequences} sequences of size {self.context_size}")
+        return self.training_tokens, self.target_tokens
+
+    def build_batches(self, npy_files:List[str], batch_size:int) :
+        training_tokens, target_tokens = self.build_data_loader(npy_files)
+        num_sequences = training_tokens.shape[0]
+        num_batches = num_sequences // batch_size
+        trim = num_batches * batch_size
+        training_batches = training_tokens[:trim].reshape(num_batches, batch_size, self.context_size)
+        target_batches = target_tokens[:trim].reshape(num_batches, batch_size, self.context_size)
+        return training_batches, target_batches
+
+
 
         
 
