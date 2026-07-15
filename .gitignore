@@ -49,3 +49,4 @@ tokenizer_corpus.txt
 *.npy
 
 wikipedia
+training/training_tokens

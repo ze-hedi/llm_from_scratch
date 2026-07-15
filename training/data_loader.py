@@ -2,7 +2,8 @@ from tokenizers import Tokenizer
 from typing import List, Dict, Tuple
 from datasets import load_dataset
 from pathlib import Path 
-import numpy as np 
+import numpy as np
+import matplotlib.pyplot as plt
 
 class DataLoader : 
     def __init__(self,tokenizer_file,training_corpus_file,context_size=1024) :
@@ -37,6 +38,7 @@ class DataLoaderHF :
         self.tokenizer = Tokenizer.from_file(tokenizer_file) 
         self.training_tokens = None
         self.target_tokens = None
+        self.dataset_token_counts = []
         self.datasets = []
         self.context_size = context_size
         self.hf_data_sets = hf_data_sets
@@ -73,8 +75,10 @@ class DataLoaderHF :
 
     def build_data_loader(self,npy_files:List[str]) :
         total_size = 0
+        self.dataset_token_counts = []
         for npy_file in npy_files :
             header = np.load(npy_file, mmap_mode='r')
+            self.dataset_token_counts.append((npy_file, header.size))
             total_size += header.size
             del header
         print(f"total tokens number : {total_size:,}")
@@ -106,9 +110,33 @@ class DataLoaderHF :
         target_batches = target_tokens[:trim].reshape(num_batches, batch_size, self.context_size)
         return training_batches, target_batches
 
+    def plot_distribution(self) :
+        total = sum(count for _, count in self.dataset_token_counts)
+        labels = []
+        sizes = []
+        for npy_file, count in self.dataset_token_counts :
+            name = Path(npy_file).stem
+            pct = count / total * 100
+            labels.append(f"{name}\n{count:,} ({pct:.2f}%)")
+            sizes.append(count)
+
+        colors = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f",
+                  "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac"]
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+        wedges, _ = ax.pie(
+            sizes,
+            colors=colors[:len(sizes)],
+            startangle=90,
+            wedgeprops={"edgecolor": "white", "linewidth": 2},
+        )
+        ax.legend(wedges, labels, loc="lower left", fontsize=9, framealpha=0.9)
+        ax.set_title(f"Token distribution across datasets\nTotal: {total:,} tokens",
+                     fontsize=14, fontweight="bold")
+        plt.tight_layout()
+        plt.show()
 
 
-        
 
 
 
