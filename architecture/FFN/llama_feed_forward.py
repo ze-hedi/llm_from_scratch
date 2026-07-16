@@ -8,9 +8,9 @@ def ffn_dim(d_model, multiple_of=64, ffn_dim_multiplier=None):
     return multiple_of * ((h + multiple_of - 1) // multiple_of)
 
 class SwiGLUMLP(nn.Module):
-    def __init__(self, d_model, multiple_of=64):
+    def __init__(self, d_model, multiple_of=64, ffn_dim_multiplier=None):
         super().__init__()
-        d_ff = ffn_dim(d_model, multiple_of)
+        d_ff = ffn_dim(d_model, multiple_of,ffn_dim_multiplier)
         self.gate_proj = nn.Linear(d_model, d_ff, bias=False)
         self.up_proj   = nn.Linear(d_model, d_ff, bias=False)
         self.down_proj = nn.Linear(d_ff, d_model, bias=False)

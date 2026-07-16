@@ -16,9 +16,11 @@ class LlamaModel(nn.Module) :
         super().__init__()
         self.tok_emb = nn.Embedding(cfg["vocab_size"],cfg["d_model"])
 
+        print(f"num number of layer of the model :{cfg['n_layers']}")
         self.llama_transformer_blocks = nn.Sequential(
             *[LlamaTransformerBlock(cfg) for _ in range(cfg["n_layers"])]
         )
+
 
         self.final_norm = RMSNorm(cfg["d_model"])
         self.out_head = nn.Linear(cfg["d_model"],cfg["vocab_size"])

@@ -1,4 +1,5 @@
 import torch
+import math
 from architecture.llama.llama_model import LlamaModel
 from training.data_loader import DataLoaderHF
 from typing import Dict, List, Tuple
@@ -92,9 +93,14 @@ class TrainingLoop :
                 self.optimizer.step()
                 self.scheduler.step()
 
-# def dff_for_target(N, V=32767, d=768, L=20, dkv=192, tied=True):
-#     fixed = (2 - tied) * V * d + L * (2*d*d + 2*d*dkv + 2*d) + d
-#     return (N - fixed) / (3 * L * d)
+def estimate_d_model(n_layers, target_params=135_000_000, vocab_size=32767,
+                     num_heads=16, num_kv_heads=4, ffn_dim_multiplier=1.0, tied=True):
+    m = ffn_dim_multiplier if ffn_dim_multiplier is not None else 1.0
+    c = 2 + 2 * (num_kv_heads / num_heads) + 8 * m
+    b = (1 if tied else 2) * vocab_size + 2 * n_layers + 1
+    d = (math.sqrt(b * b + 4 * c * n_layers * target_params) - b) / (2 * c * n_layers)
+    head_dim_8 = num_heads * 8
+    return round(d / head_dim_8) * head_dim_8   # snap: divisibl
 
 if __name__ == "__main__" : 
 
@@ -102,12 +108,14 @@ if __name__ == "__main__" :
         "d_model"        : 768,    
         "num_heads"      : 16,
         "num_kv_heads"   : 4,     
-        "d_ff"           : 1792,  
         "vocab_size"     : 32767, 
-        "n_layers"       : 30,
+        "n_layers"       : 1,
         "context_window" : 2048,  
     }
 
+    d_model = estimate_d_model(10)
+    print(f"estimated d_model {d_model}") 
+    model_config["d_model"] = d_model
     llama_model = LlamaModel(model_config)
     total = sum(p.numel() for p in llama_model.parameters())
     trainable = sum(p.numel() for p in llama_model.parameters() if p.requires_grad)
