@@ -1,5 +1,7 @@
 import torch
 import math
+import os
+from pathlib import Path
 from architecture.llama.llama_model import LlamaModel
 from training.data_loader import DataLoaderHF
 from typing import Dict, List, Tuple
@@ -102,6 +104,8 @@ class TrainingLoop :
                 if (i + 1) % 100 == 0 :
                     print(f"step {i + 1}/{self.training_steps} — accumulated loss: {accumulated_loss.item():.4f}")
                     accumulated_loss.zero_()
+        torch.save(self.model.state_dict(), "model_weights.pt")
+        print("model weights saved to model_weights.pt")
 
 def estimate_d_model(n_layers, target_params=135_000_000, vocab_size=32767,
                      num_heads=16, num_kv_heads=4, ffn_dim_multiplier=1.0, tied=False):
