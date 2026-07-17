@@ -19,10 +19,11 @@ class TrainingLoop :
                  warm_up_start_factor:float=0.01, 
                  epochs:int=1) :
 
-        self.model_config = model_config 
+        self.model_config = model_config
         self.model = model(self.model_config)
-        self.data_loader = data_loader 
-        self.device = device 
+        self.data_loader = data_loader
+        self.device = device
+        self.dtype = dtype
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=lr ,
@@ -77,30 +78,64 @@ class TrainingLoop :
             milestones=[self.warmup_steps, self.stable_steps+self.warmup_steps]
         )
 
-    def train(self) : 
+    def train(self) :
+        self.model.to(device=self.device, dtype=self.dtype)
         self.model.train() 
-        for epoch in range(self.epochs) : 
+        for epoch in range(self.epochs) :
             print(f"epoch : {epoch} ")
+            accumulated_loss = torch.zeros(1, device=self.device)
             for i in range(self.training_steps) :
-                self.optimizer.zero_grad() 
-                logits = self.model(self.training_batches[i])
+                print(f"iteration num : {i}")
+                self.optimizer.zero_grad()
+                batch = self.training_batches[i].to(self.device, non_blocking=True)
+                target = self.target_batches[i].to(self.device, non_blocking=True)
+                logits = self.model(batch)
                 loss = torch.nn.functional.cross_entropy(
-                    logits.flatten(0,1) , 
-                    self.target_batches[i].flatten()
+                    logits.flatten(0,1) ,
+                    target.flatten()
                 )
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(),max_norm=1.0)
                 self.optimizer.step()
                 self.scheduler.step()
+                accumulated_loss += loss.detach()
+                if (i + 1) % 100 == 0 :
+                    print(f"step {i + 1}/{self.training_steps} — accumulated loss: {accumulated_loss.item():.4f}")
+                    accumulated_loss.zero_()
 
 def estimate_d_model(n_layers, target_params=135_000_000, vocab_size=32767,
-                     num_heads=16, num_kv_heads=4, ffn_dim_multiplier=1.0, tied=True):
+                     num_heads=16, num_kv_heads=4, ffn_dim_multiplier=1.0, tied=False):
+    from architecture.FFN.llama_feed_forward import ffn_dim as compute_ffn_dim
+
+    head_dim_8 = num_heads * 8
+
+    # closed-form initial guess (approximates d_ff as exactly 8/3 * d * m)
     m = ffn_dim_multiplier if ffn_dim_multiplier is not None else 1.0
     c = 2 + 2 * (num_kv_heads / num_heads) + 8 * m
     b = (1 if tied else 2) * vocab_size + 2 * n_layers + 1
-    d = (math.sqrt(b * b + 4 * c * n_layers * target_params) - b) / (2 * c * n_layers)
-    head_dim_8 = num_heads * 8
-    return round(d / head_dim_8) * head_dim_8   # snap: divisibl
+    d_approx = (math.sqrt(b * b + 4 * c * n_layers * target_params) - b) / (2 * c * n_layers)
+
+    def actual_params(d):
+        d_ff = compute_ffn_dim(d, ffn_dim_multiplier=ffn_dim_multiplier)
+        attn = 2 * d * d + 2 * d * (num_kv_heads * (d // num_heads))
+        ffn = 3 * d * d_ff
+        norms = 2 * d
+        per_layer = attn + ffn + norms
+        emb = (1 if tied else 2) * vocab_size * d
+        return n_layers * per_layer + emb + d  # +d for final RMSNorm
+
+    # search nearby multiples of head_dim_8 around the initial guess
+    best_d = round(d_approx / head_dim_8) * head_dim_8
+    best_err = abs(actual_params(best_d) - target_params)
+    for offset in range(-3, 4):
+        candidate = round(d_approx / head_dim_8) * head_dim_8 + offset * head_dim_8
+        if candidate <= 0:
+            continue
+        err = abs(actual_params(candidate) - target_params)
+        if err < best_err:
+            best_d = candidate
+            best_err = err
+    return best_d
 
 if __name__ == "__main__" : 
 
@@ -108,35 +143,35 @@ if __name__ == "__main__" :
         "d_model"        : 768,    
         "num_heads"      : 16,
         "num_kv_heads"   : 4,     
-        "vocab_size"     : 32767, 
-        "n_layers"       : 1,
+        "vocab_size"     : 32768, 
+        "n_layers"       : 22,
         "context_window" : 2048,  
     }
 
-    d_model = estimate_d_model(10)
-    print(f"estimated d_model {d_model}") 
+    d_model = estimate_d_model(model_config["n_layers"])
+    print(f"estimated d_model {d_model}")
     model_config["d_model"] = d_model
     llama_model = LlamaModel(model_config)
     total = sum(p.numel() for p in llama_model.parameters())
     trainable = sum(p.numel() for p in llama_model.parameters() if p.requires_grad)
     print(f"total number of parameters : {total:,}") 
     print(f"total number of trainable parameters :  {trainable:,}")
-    data_loader = DataLoaderHF(tokenizer_file = "./fr_bpe_32k_422.json")
+    data_loader = DataLoaderHF(tokenizer_file = "./fr_bpe_32k_422.json",context_size=model_config["context_window"])
+    num_tokens_per_batch = 70_000
+    batch_size = num_tokens_per_batch // model_config["context_window"]
     npy_files = [
         "./training/training_tokens/manu_french_poetry_tokens.npy",
-        # "./training/training_tokens/Volko76_french-classic-books_tokens.npy",
-        # "./training/training_tokens/nirantk_french-books_tokens.npy",
-        # "./training/training_tokens/PleIAs_French-PD-Newspapers.npy",
-        # "./training/training_tokens/wikimedia_wikipedia_tokens.npy",
+        "./training/training_tokens/Volko76_french-classic-books_tokens.npy",
+        "./training/training_tokens/nirantk_french-books_tokens.npy",
+        "./training/training_tokens/PleIAs_French-PD-Newspapers.npy",
+        "./training/training_tokens/wikimedia_wikipedia_tokens.npy",
     ]
-    training_batches, target_batches = data_loader.build_batches(npy_files=npy_files, batch_size=5)
-    print(f"{len(training_batches)} batches of {len(training_batches[0])} sequences")
-
-
-    
-    
-
-
-        
-
+    training_loop = TrainingLoop(
+        model=LlamaModel,
+        model_config=model_config,
+        data_loader=data_loader,
+        data_set=npy_files,
+        batch_size=batch_size,
+    )
+    training_loop.train()
 

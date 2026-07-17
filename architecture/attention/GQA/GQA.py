@@ -117,7 +117,7 @@ class GQAFlashAttention(nn.Module) :
         q = self.W_query(x).view(b, num_tokens, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.W_key(x).view(b, num_tokens, self.num_kv_groups, self.head_dim).transpose(1, 2)
         v = self.W_value(x).view(b, num_tokens, self.num_kv_groups, self.head_dim).transpose(1, 2)
-        
+
         q = apply_rope(q, self.rope_cos, self.rope_sin)
         k = apply_rope(k, self.rope_cos, self.rope_sin)
 

@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 class DataLoader : 
     def __init__(self,tokenizer_file,training_corpus_file,context_size=1024) :
         self.tokenizer = Tokenizer.from_file(tokenizer_file) 
+        print(f"vocab size : {self.tokenizer.get_vocab_size()}")
         self.token_ids = None
         self.training_tokens = []
         self.target_tokens = [] 
@@ -108,6 +109,7 @@ class DataLoaderHF :
         trim = num_batches * batch_size
         training_batches = training_tokens[:trim].reshape(num_batches, batch_size, self.context_size)
         target_batches = target_tokens[:trim].reshape(num_batches, batch_size, self.context_size)
+        print(f"tokens per batch: {batch_size * self.context_size}")
         return training_batches, target_batches
 
     def plot_distribution(self) :
