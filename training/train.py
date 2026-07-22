@@ -144,17 +144,15 @@ def estimate_d_model(n_layers, target_params=135_000_000, vocab_size=32767,
 if __name__ == "__main__" : 
 
     model_config = {
-        "d_model"        : 768,    
+        "d_model"        : 768,
+        "d_ff"           : 2048,
         "num_heads"      : 16,
-        "num_kv_heads"   : 4,     
-        "vocab_size"     : 32768, 
+        "num_kv_heads"   : 4,
+        "vocab_size"     : 32768,
         "n_layers"       : 22,
-        "context_window" : 2048,  
+        "context_window" : 2048,
     }
 
-    d_model = estimate_d_model(model_config["n_layers"])
-    print(f"estimated d_model {d_model}")
-    model_config["d_model"] = d_model
     llama_model = LlamaModel(model_config)
     total = sum(p.numel() for p in llama_model.parameters())
     trainable = sum(p.numel() for p in llama_model.parameters() if p.requires_grad)

@@ -4,8 +4,9 @@ from architecture.llama.llama_transformer_block import LlamaTransformerBlock
 from architecture.normalization.RMSNorm import RMSNorm
 
 ## configuration inputs
-# "d_model" 
-# "num_heads" 
+# "d_model"
+# "d_ff"
+# "num_heads"
 # "num_kv_groups" 
 # "context_window"
 # vocab_size 
